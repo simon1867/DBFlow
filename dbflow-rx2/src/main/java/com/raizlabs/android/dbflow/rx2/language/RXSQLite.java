@@ -1,6 +1,6 @@
 package com.raizlabs.android.dbflow.rx2.language;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import com.raizlabs.android.dbflow.sql.language.SQLite;
 import com.raizlabs.android.dbflow.sql.queriable.ModelQueriable;
@@ -18,8 +18,8 @@ public class RXSQLite {
     }
 
     @NonNull
-    public static <T> RXQueriableImpl<T> rx(Class<T> table, Queriable queriable) {
-        return new RXQueriableImpl<>(table, queriable);
+    public static RXQueriableImpl rx(Class<?> table, Queriable queriable) {
+        return new RXQueriableImpl(table, queriable);
     }
 
 }

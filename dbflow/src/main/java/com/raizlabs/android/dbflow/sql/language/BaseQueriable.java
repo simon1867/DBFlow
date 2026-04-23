@@ -3,7 +3,7 @@ package com.raizlabs.android.dbflow.sql.language;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDoneException;
 import android.database.sqlite.SQLiteStatement;
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import com.raizlabs.android.dbflow.config.FlowLog;
 import com.raizlabs.android.dbflow.config.FlowManager;
@@ -45,15 +45,7 @@ public abstract class BaseQueriable<TModel> implements Queriable, Actionable {
      */
     @Override
     public long count(@NonNull DatabaseWrapper databaseWrapper) {
-        try {
-            String query = getQuery();
-            FlowLog.log(FlowLog.Level.V, "Executing query: " + query);
-            return SqlUtils.longForQuery(databaseWrapper, query);
-        } catch (SQLiteDoneException sde) {
-            // catch exception here, log it but return 0;
-            FlowLog.log(FlowLog.Level.W, sde);
-        }
-        return 0;
+        return longValue(databaseWrapper);
     }
 
     /**
@@ -63,7 +55,25 @@ public abstract class BaseQueriable<TModel> implements Queriable, Actionable {
      */
     @Override
     public long count() {
-        return count(FlowManager.getWritableDatabaseForTable(table));
+        return longValue();
+    }
+
+    @Override
+    public long longValue() {
+        return longValue(FlowManager.getWritableDatabaseForTable(table));
+    }
+
+    @Override
+    public long longValue(DatabaseWrapper databaseWrapper) {
+        try {
+            String query = getQuery();
+            FlowLog.log(FlowLog.Level.V, "Executing query: " + query);
+            return SqlUtils.longForQuery(databaseWrapper, query);
+        } catch (SQLiteDoneException sde) {
+            // catch exception here, log it but return 0;
+            FlowLog.log(FlowLog.Level.W, sde);
+        }
+        return 0;
     }
 
     @Override
@@ -104,7 +114,14 @@ public abstract class BaseQueriable<TModel> implements Queriable, Actionable {
 
     @Override
     public long executeInsert(@NonNull DatabaseWrapper databaseWrapper) {
-        return compileStatement().executeInsert();
+        DatabaseStatement statement = compileStatement(databaseWrapper);
+        long rows;
+        try {
+            rows = statement.executeInsert();
+        } finally {
+            statement.close();
+        }
+        return rows;
     }
 
     @Override

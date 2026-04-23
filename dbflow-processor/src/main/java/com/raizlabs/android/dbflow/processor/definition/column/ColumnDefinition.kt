@@ -1,7 +1,14 @@
 package com.raizlabs.android.dbflow.processor.definition.column
 
 import com.grosner.kpoet.code
-import com.raizlabs.android.dbflow.annotation.*
+import com.raizlabs.android.dbflow.annotation.Collate
+import com.raizlabs.android.dbflow.annotation.Column
+import com.raizlabs.android.dbflow.annotation.ConflictAction
+import com.raizlabs.android.dbflow.annotation.Index
+import com.raizlabs.android.dbflow.annotation.IndexGroup
+import com.raizlabs.android.dbflow.annotation.NotNull
+import com.raizlabs.android.dbflow.annotation.PrimaryKey
+import com.raizlabs.android.dbflow.annotation.Unique
 import com.raizlabs.android.dbflow.data.Blob
 import com.raizlabs.android.dbflow.processor.ClassNames
 import com.raizlabs.android.dbflow.processor.ProcessorManager
@@ -9,9 +16,22 @@ import com.raizlabs.android.dbflow.processor.definition.BaseDefinition
 import com.raizlabs.android.dbflow.processor.definition.BaseTableDefinition
 import com.raizlabs.android.dbflow.processor.definition.TableDefinition
 import com.raizlabs.android.dbflow.processor.definition.TypeConverterDefinition
-import com.raizlabs.android.dbflow.processor.utils.*
+import com.raizlabs.android.dbflow.processor.utils.annotation
+import com.raizlabs.android.dbflow.processor.utils.fromTypeMirror
+import com.raizlabs.android.dbflow.processor.utils.getTypeElement
+import com.raizlabs.android.dbflow.processor.utils.isNullOrEmpty
+import com.raizlabs.android.dbflow.processor.utils.toClassName
+import com.raizlabs.android.dbflow.processor.utils.toTypeElement
 import com.raizlabs.android.dbflow.sql.QueryBuilder
-import com.squareup.javapoet.*
+import com.squareup.javapoet.ArrayTypeName
+import com.squareup.javapoet.ClassName
+import com.squareup.javapoet.CodeBlock
+import com.squareup.javapoet.FieldSpec
+import com.squareup.javapoet.MethodSpec
+import com.squareup.javapoet.NameAllocator
+import com.squareup.javapoet.ParameterizedTypeName
+import com.squareup.javapoet.TypeName
+import com.squareup.javapoet.TypeSpec
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.regex.Pattern
@@ -45,6 +65,7 @@ constructor(processorManager: ProcessorManager, element: Element,
     var length = -1
     var notNull = false
     var isNotNullType = false
+    var isNullableType = true
     var onNullConflict: ConflictAction? = null
     var onUniqueConflict: ConflictAction? = null
     var unique = false
@@ -93,14 +114,22 @@ constructor(processorManager: ProcessorManager, element: Element,
             notNull = true
         }
 
-        // if specified, usually from Kotlin targets, we will not set null on the field.
-        element.annotation<org.jetbrains.annotations.NotNull>()?.let {
+        if (elementTypeName?.isPrimitive == true) {
+            isNullableType = false
             isNotNullType = true
         }
 
+        // if specified, usually from Kotlin targets, we will not set null on the field.
+        element.annotation<org.jetbrains.annotations.NotNull>()?.let {
+            isNotNullType = true
+            isNullableType = false
+        }
+
+        // android support annotation
         element.annotationMirrors
                 .find { it.annotationType.toTypeElement().toClassName() == ClassNames.NON_NULL }?.let {
             isNotNullType = true
+            isNullableType = false
         }
 
         column?.let {
@@ -214,11 +243,12 @@ constructor(processorManager: ProcessorManager, element: Element,
                 wrapperAccessor = BlobColumnAccessor()
                 wrapperTypeName = ArrayTypeName.of(TypeName.BYTE)
             } else {
-                if (elementTypeName is ParameterizedTypeName) {
+                if (elementTypeName is ParameterizedTypeName ||
+                        elementTypeName == ArrayTypeName.of(TypeName.BYTE.unbox())) {
                     // do nothing, for now.
                 } else if (elementTypeName is ArrayTypeName) {
                     processorManager.messager.printMessage(Diagnostic.Kind.ERROR,
-                            "Columns cannot be of array type.")
+                            "Columns cannot be of array type. Found $elementTypeName")
                 } else {
                     if (elementTypeName == TypeName.BOOLEAN) {
                         wrapperAccessor = BooleanColumnAccessor()
@@ -275,7 +305,7 @@ constructor(processorManager: ProcessorManager, element: Element,
         if (tableDef is TableDefinition) {
             tableName = tableDef.tableName ?: ""
         }
-        return "${baseTableDefinition.databaseDefinition?.databaseName}.$tableName.${QueryBuilder.quote(columnName)}"
+        return "${baseTableDefinition.databaseDefinition?.databaseClassName}.$tableName.${QueryBuilder.quote(columnName)}"
     }
 
     open fun addPropertyDefinition(typeBuilder: TypeSpec.Builder, tableClass: TypeName) {
@@ -446,9 +476,8 @@ constructor(processorManager: ProcessorManager, element: Element,
                 codeBlockBuilder.add(" UNIQUE ON CONFLICT \$L", onUniqueConflict)
             }
 
-
             if (notNull) {
-                codeBlockBuilder.add(" NOT NULL")
+                codeBlockBuilder.add(" NOT NULL ON CONFLICT \$L", onNullConflict)
             }
 
             return codeBlockBuilder.build()

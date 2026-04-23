@@ -3,8 +3,8 @@ package com.raizlabs.android.dbflow.sql;
 import android.content.ContentValues;
 import android.database.ContentObserver;
 import android.net.Uri;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.raizlabs.android.dbflow.StringUtils;
 import com.raizlabs.android.dbflow.config.FlowManager;
@@ -27,16 +27,19 @@ import java.util.Map;
  */
 public class SqlUtils {
 
+    public static final String TABLE_QUERY_PARAM = "tableName";
+
     private static final char[] hexArray = "0123456789ABCDEF".toCharArray();
 
     /**
      * Notifies the {@link ContentObserver} that the model has changed.
      */
     @Deprecated
-    public static void notifyModelChanged(Class<?> table, Action action,
+    public static void notifyModelChanged(@NonNull String contentAuthority,
+                                          Class<?> table, Action action,
                                           Iterable<SQLOperator> sqlOperators) {
         FlowManager.getContext().getContentResolver().notifyChange(
-            getNotificationUri(table, action, sqlOperators), null, true);
+                getNotificationUri(contentAuthority, table, action, sqlOperators), null, true);
     }
 
     /**
@@ -71,11 +74,13 @@ public class SqlUtils {
      * @param conditions The set of key-value {@link SQLOperator} to construct into a uri.
      * @return The {@link Uri}.
      */
-    public static Uri getNotificationUri(@NonNull Class<?> modelClass,
+    public static Uri getNotificationUri(@NonNull String contentAuthority,
+                                         @NonNull Class<?> modelClass,
                                          @Nullable Action action,
                                          @Nullable Iterable<SQLOperator> conditions) {
         Uri.Builder uriBuilder = new Uri.Builder().scheme("dbflow")
-            .authority(FlowManager.getTableName(modelClass));
+                .authority(contentAuthority)
+                .appendQueryParameter(TABLE_QUERY_PARAM, FlowManager.getTableName(modelClass));
         if (action != null) {
             uriBuilder.fragment(action.name());
         }
@@ -96,11 +101,13 @@ public class SqlUtils {
      * @param conditions The set of key-value {@link SQLOperator} to construct into a uri.
      * @return The {@link Uri}.
      */
-    public static Uri getNotificationUri(@NonNull Class<?> modelClass,
+    public static Uri getNotificationUri(@NonNull String contentAuthority,
+                                         @NonNull Class<?> modelClass,
                                          @NonNull Action action,
                                          @Nullable SQLOperator[] conditions) {
         Uri.Builder uriBuilder = new Uri.Builder().scheme("dbflow")
-            .authority(FlowManager.getTableName(modelClass));
+                .authority(contentAuthority)
+                .appendQueryParameter(TABLE_QUERY_PARAM, FlowManager.getTableName(modelClass));
         if (action != null) {
             uriBuilder.fragment(action.name());
         }
@@ -124,7 +131,8 @@ public class SqlUtils {
      * @return Notification uri.
      */
 
-    public static Uri getNotificationUri(@NonNull Class<?> modelClass,
+    public static Uri getNotificationUri(@NonNull String contentAuthority,
+                                         @NonNull Class<?> modelClass,
                                          @NonNull Action action,
                                          @NonNull String notifyKey,
                                          @Nullable Object notifyValue) {
@@ -132,7 +140,7 @@ public class SqlUtils {
         if (StringUtils.isNotNullOrEmpty(notifyKey)) {
             operator = Operator.op(new NameAlias.Builder(notifyKey).build()).value(notifyValue);
         }
-        return getNotificationUri(modelClass, action, new SQLOperator[]{operator});
+        return getNotificationUri(contentAuthority, modelClass, action, new SQLOperator[]{operator});
     }
 
     /**
@@ -140,37 +148,57 @@ public class SqlUtils {
      * @param action     The {@link Action} to use.
      * @return The uri for updates to {@link Model}, meant for general changes.
      */
-    public static Uri getNotificationUri(@NonNull Class<?> modelClass, @NonNull Action action) {
-        return getNotificationUri(modelClass, action, null, null);
+    public static Uri getNotificationUri(@NonNull String contentAuthority,
+                                         @NonNull Class<?> modelClass,
+                                         @NonNull Action action) {
+        return getNotificationUri(contentAuthority, modelClass, action, "", null);
     }
 
 
     /**
      * Drops an active TRIGGER by specifying the onTable and triggerName
      *
-     * @param mOnTable    The table that this trigger runs on
+     * @param onTable     The table that this trigger runs on
      * @param triggerName The name of the trigger
      */
-    public static void dropTrigger(@NonNull Class<?> mOnTable, @NonNull String triggerName) {
+    public static void dropTrigger(Class<?> onTable, String triggerName) {
         QueryBuilder queryBuilder = new QueryBuilder("DROP TRIGGER IF EXISTS ")
             .append(triggerName);
-        FlowManager.getDatabaseForTable(mOnTable).getWritableDatabase().execSQL(queryBuilder.getQuery());
+        FlowManager.getDatabaseForTable(onTable).getWritableDatabase().execSQL(queryBuilder.getQuery());
+    }
+
+    /**
+     * Drops an active TRIGGER by specifying the databaseWrapper and triggerName
+     *
+     * @param databaseWrapper The manually specified wrapper.
+     * @param triggerName     The name of the trigger
+     */
+    public static void dropTrigger(DatabaseWrapper databaseWrapper, String triggerName) {
+        QueryBuilder queryBuilder = new QueryBuilder("DROP TRIGGER IF EXISTS ")
+            .append(triggerName);
+        databaseWrapper.execSQL(queryBuilder.getQuery());
+    }
+
+    /**
+     * Drops an active INDEX by specifying the databaseWrapper and indexName
+     *
+     * @param databaseWrapper The manually specified wrapper.
+     * @param indexName       The name of the index.
+     */
+    public static void dropIndex(@NonNull DatabaseWrapper databaseWrapper,
+                                 @NonNull String indexName) {
+        QueryBuilder queryBuilder = new QueryBuilder("DROP INDEX IF EXISTS ")
+                .append(QueryBuilder.quoteIfNeeded(indexName));
+        databaseWrapper.execSQL(queryBuilder.getQuery());
     }
 
     /**
      * Drops an active INDEX by specifying the onTable and indexName
      *
+     * @param onTable   The table that this trigger runs on
      * @param indexName The name of the index.
      */
-    public static void dropIndex(@NonNull DatabaseWrapper databaseWrapper,
-                                 @NonNull String indexName) {
-        QueryBuilder queryBuilder = new QueryBuilder("DROP INDEX IF EXISTS ")
-            .append(QueryBuilder.quoteIfNeeded(indexName));
-        databaseWrapper.execSQL(queryBuilder.getQuery());
-    }
-
-    public static void dropIndex(@NonNull Class<?> onTable,
-                                 @NonNull String indexName) {
+    public static void dropIndex(Class<?> onTable, String indexName) {
         dropIndex(FlowManager.getDatabaseForTable(onTable).getWritableDatabase(), indexName);
     }
 
@@ -186,7 +214,7 @@ public class SqlUtils {
         for (Map.Entry<String, Object> entry : entries) {
             String key = entry.getKey();
             operatorGroup.and(Operator.op(new NameAlias.Builder(key).build())
-                .is(contentValues.get(key)));
+                    .is(contentValues.get(key)));
         }
     }
 
@@ -212,6 +240,16 @@ public class SqlUtils {
 
     public static long longForQuery(@NonNull DatabaseWrapper wrapper,
                                     @NonNull String query) {
+        DatabaseStatement statement = wrapper.compileStatement(query);
+        try {
+            return statement.simpleQueryForLong();
+        } finally {
+            statement.close();
+        }
+    }
+
+    public static double doubleForQuery(@NonNull DatabaseWrapper wrapper,
+                                        @NonNull String query) {
         DatabaseStatement statement = wrapper.compileStatement(query);
         try {
             return statement.simpleQueryForLong();

@@ -1,6 +1,6 @@
 package com.raizlabs.android.dbflow.sql.saveable;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import com.raizlabs.android.dbflow.structure.database.DatabaseStatement;
 import com.raizlabs.android.dbflow.structure.database.DatabaseWrapper;
@@ -34,6 +34,7 @@ public class ListModelSaver<TModel> {
             }
         } finally {
             statement.close();
+            updateStatement.close();
         }
     }
 

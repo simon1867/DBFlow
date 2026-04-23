@@ -1,6 +1,6 @@
 package com.raizlabs.android.dbflow.sql.language;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import com.raizlabs.android.dbflow.sql.language.property.IProperty;
 import com.raizlabs.android.dbflow.structure.database.DatabaseWrapper;
@@ -36,26 +36,6 @@ public abstract class BaseTransformable<TModel> extends BaseModelQueriable<TMode
     @Override
     public FlowCursor query(@NonNull DatabaseWrapper databaseWrapper) {
         return where().query(databaseWrapper);
-    }
-
-    /**
-     * Executes a SQL statement that retrieves the count of results in the DB.
-     *
-     * @return The number of rows this query returns
-     */
-    @Override
-    public long count() {
-        return where().count();
-    }
-
-    @Override
-    public long count(@NonNull DatabaseWrapper databaseWrapper) {
-        return where().count(databaseWrapper);
-    }
-
-    @Override
-    public long executeUpdateDelete(@NonNull DatabaseWrapper databaseWrapper) {
-        return where().executeUpdateDelete(databaseWrapper);
     }
 
     @NonNull

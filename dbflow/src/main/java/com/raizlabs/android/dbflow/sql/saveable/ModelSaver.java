@@ -1,7 +1,7 @@
 package com.raizlabs.android.dbflow.sql.saveable;
 
 import android.content.ContentValues;
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import com.raizlabs.android.dbflow.annotation.ConflictAction;
 import com.raizlabs.android.dbflow.config.FlowManager;
@@ -17,7 +17,7 @@ import com.raizlabs.android.dbflow.structure.database.DatabaseWrapper;
  */
 public class ModelSaver<TModel> {
 
-    private static final int INSERT_FAILED = -1;
+    public static final int INSERT_FAILED = -1;
 
     private ModelAdapter<TModel> modelAdapter;
 
@@ -27,13 +27,26 @@ public class ModelSaver<TModel> {
 
     public synchronized boolean save(@NonNull TModel model) {
         return save(model, getWritableDatabase(), modelAdapter.getInsertStatement(),
-            modelAdapter.getUpdateStatement());
+                modelAdapter.getUpdateStatement());
     }
 
-    public synchronized boolean save(@NonNull TModel model,
-                                     @NonNull DatabaseWrapper wrapper) {
-        return save(model, wrapper, modelAdapter.getInsertStatement(wrapper),
-            modelAdapter.getUpdateStatement(wrapper));
+    public synchronized boolean save(@NonNull TModel model, @NonNull DatabaseWrapper wrapper) {
+        boolean exists = getModelAdapter().exists(model, wrapper);
+
+        if (exists) {
+            exists = update(model, wrapper);
+        }
+
+        if (!exists) {
+            exists = insert(model, wrapper) > INSERT_FAILED;
+        }
+
+        if (exists) {
+            NotifyDistributor.get().notifyModelChanged(model, getModelAdapter(), BaseModel.Action.SAVE);
+        }
+
+        // return successful store into db.
+        return exists;
     }
 
     @SuppressWarnings("unchecked")
@@ -64,13 +77,13 @@ public class ModelSaver<TModel> {
     }
 
     public synchronized boolean update(@NonNull TModel model, @NonNull DatabaseWrapper wrapper) {
-        DatabaseStatement insertStatement = modelAdapter.getUpdateStatement(wrapper);
+        DatabaseStatement updateStatement = modelAdapter.getUpdateStatement(wrapper);
         boolean success = false;
         try {
-            success = update(model, wrapper, insertStatement);
+            success = update(model, wrapper, updateStatement);
         } finally {
             // since we generate an insert every time, we can safely close the statement here.
-            insertStatement.close();
+            updateStatement.close();
         }
         return success;
     }
@@ -201,8 +214,8 @@ public class ModelSaver<TModel> {
         modelAdapter.saveForeignKeys(model, wrapper);
         modelAdapter.bindToContentValues(contentValues, model);
         boolean successful = wrapper.updateWithOnConflict(modelAdapter.getTableName(), contentValues,
-            modelAdapter.getPrimaryConditionClause(model).getQuery(), null,
-            ConflictAction.getSQLiteDatabaseAlgorithmInt(modelAdapter.getUpdateOnConflictAction())) != 0;
+                modelAdapter.getPrimaryConditionClause(model).getQuery(), null,
+                ConflictAction.getSQLiteDatabaseAlgorithmInt(modelAdapter.getUpdateOnConflictAction())) != 0;
         if (successful) {
             NotifyDistributor.get().notifyModelChanged(model, modelAdapter, BaseModel.Action.UPDATE);
         }

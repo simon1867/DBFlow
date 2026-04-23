@@ -2,8 +2,8 @@ package com.raizlabs.android.dbflow.structure.database;
 
 import android.database.Cursor;
 import android.database.CursorWrapper;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 /**
  * Common {@link Cursor} class that wraps cursors we use in this library with convenience loading methods.
@@ -235,6 +235,18 @@ public class FlowCursor extends CursorWrapper {
 
     public Short getShortOrDefault(String columnName, Short defValue) {
         return getShortOrDefault(cursor.getColumnIndex(columnName), defValue);
+    }
+
+    public byte[] getBlobOrDefault(String columnName) {
+        return getBlobOrDefault(cursor.getColumnIndex(columnName));
+    }
+
+    public byte[] getBlobOrDefault(int index) {
+        if (index != -1 && !cursor.isNull(index)) {
+            return cursor.getBlob(index);
+        } else {
+            return null;
+        }
     }
 
     public byte[] getBlobOrDefault(int index, byte[] defValue) {

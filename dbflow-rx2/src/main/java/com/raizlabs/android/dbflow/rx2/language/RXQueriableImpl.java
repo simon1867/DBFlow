@@ -1,7 +1,10 @@
 package com.raizlabs.android.dbflow.rx2.language;
 
+import static io.reactivex.Single.fromCallable;
+
 import android.database.Cursor;
-import android.support.annotation.NonNull;
+
+import androidx.annotation.NonNull;
 
 import com.raizlabs.android.dbflow.config.FlowManager;
 import com.raizlabs.android.dbflow.sql.language.BaseQueriable;
@@ -11,19 +14,19 @@ import com.raizlabs.android.dbflow.structure.database.DatabaseWrapper;
 
 import java.util.concurrent.Callable;
 
+import io.reactivex.Completable;
+import io.reactivex.Maybe;
 import io.reactivex.Single;
-
-import static io.reactivex.Single.fromCallable;
 
 /**
  * Description: Represents {@link BaseQueriable} with RX constructs.
  */
-public class RXQueriableImpl<T> implements RXQueriable {
+public class RXQueriableImpl implements RXQueriable {
 
-    private final Class<T> table;
+    private final Class<?> table;
     private final Queriable queriable;
 
-    public RXQueriableImpl(Class<T> table, Queriable queriable) {
+    public RXQueriableImpl(Class<?> table, Queriable queriable) {
         this.table = table;
         this.queriable = queriable;
     }
@@ -35,8 +38,8 @@ public class RXQueriableImpl<T> implements RXQueriable {
 
     @NonNull
     @Override
-    public Single<Cursor> query() {
-        return fromCallable(new Callable<Cursor>() {
+    public Maybe<Cursor> query() {
+        return Maybe.fromCallable(new Callable<Cursor>() {
             @Override
             public Cursor call() throws Exception {
                 return getInnerQueriable().query();
@@ -46,8 +49,8 @@ public class RXQueriableImpl<T> implements RXQueriable {
 
     @NonNull
     @Override
-    public Single<Cursor> query(final DatabaseWrapper databaseWrapper) {
-        return fromCallable(new Callable<Cursor>() {
+    public Maybe<Cursor> query(final DatabaseWrapper databaseWrapper) {
+        return Maybe.fromCallable(new Callable<Cursor>() {
             @Override
             public Cursor call() throws Exception {
                 return getInnerQueriable().query(databaseWrapper);
@@ -95,6 +98,28 @@ public class RXQueriableImpl<T> implements RXQueriable {
             @Override
             public Long call() throws Exception {
                 return getInnerQueriable().count(databaseWrapper);
+            }
+        });
+    }
+
+    @NonNull
+    @Override
+    public Single<Long> longValue() {
+        return fromCallable(new Callable<Long>() {
+            @Override
+            public Long call() throws Exception {
+                return getInnerQueriable().longValue();
+            }
+        });
+    }
+
+    @NonNull
+    @Override
+    public Single<Long> longValue(final DatabaseWrapper databaseWrapper) {
+        return fromCallable(new Callable<Long>() {
+            @Override
+            public Long call() throws Exception {
+                return getInnerQueriable().longValue(databaseWrapper);
             }
         });
     }
@@ -167,24 +192,22 @@ public class RXQueriableImpl<T> implements RXQueriable {
 
     @NonNull
     @Override
-    public Single<Void> execute() {
-        return fromCallable(new Callable<Void>() {
+    public Completable execute() {
+        return Completable.fromRunnable(new Runnable() {
             @Override
-            public Void call() throws Exception {
+            public void run() {
                 getInnerQueriable().execute();
-                return null;
             }
         });
     }
 
     @NonNull
     @Override
-    public Single<Void> execute(final DatabaseWrapper databaseWrapper) {
-        return fromCallable(new Callable<Void>() {
+    public Completable execute(final DatabaseWrapper databaseWrapper) {
+        return Completable.fromRunnable(new Runnable() {
             @Override
-            public Void call() throws Exception {
+            public void run() {
                 getInnerQueriable().execute(databaseWrapper);
-                return null;
             }
         });
     }

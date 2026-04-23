@@ -1,6 +1,6 @@
 package com.raizlabs.android.dbflow.sql.language.property;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import com.raizlabs.android.dbflow.converter.TypeConverter;
 import com.raizlabs.android.dbflow.sql.language.NameAlias;
@@ -72,4 +72,13 @@ public class TypeConvertedProperty<T, V> extends Property<V> {
         return databaseProperty;
     }
 
+    @NonNull
+    @Override
+    public Property<V> withTable(@NonNull NameAlias tableNameAlias) {
+        NameAlias nameAlias = this.getNameAlias()
+                                  .newBuilder()
+                                  .withTable(tableNameAlias.getQuery())
+                                  .build();
+        return new TypeConvertedProperty<>(this.getTable(), nameAlias, this.convertToDB, this.getter);
+    }
 }

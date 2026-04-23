@@ -1,7 +1,7 @@
 package com.raizlabs.android.dbflow.rx.language;
 
 import android.database.Cursor;
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import com.raizlabs.android.dbflow.config.FlowManager;
 import com.raizlabs.android.dbflow.sql.language.BaseQueriable;
@@ -18,12 +18,12 @@ import static rx.Single.fromCallable;
 /**
  * Description: Represents {@link BaseQueriable} with RX constructs.
  */
-public class RXQueriableImpl<T> implements RXQueriable {
+public class RXQueriableImpl implements RXQueriable {
 
-    private final Class<T> table;
+    private final Class<?> table;
     private final Queriable queriable;
 
-    RXQueriableImpl(Class<T> table, Queriable queriable) {
+    RXQueriableImpl(Class<?> table, Queriable queriable) {
         this.table = table;
         this.queriable = queriable;
     }
@@ -94,6 +94,28 @@ public class RXQueriableImpl<T> implements RXQueriable {
             @Override
             public Long call() throws Exception {
                 return getInnerQueriable().count(databaseWrapper);
+            }
+        });
+    }
+
+    @NonNull
+    @Override
+    public Single<Long> longValue() {
+        return fromCallable(new Callable<Long>() {
+            @Override
+            public Long call() throws Exception {
+                return getInnerQueriable().longValue();
+            }
+        });
+    }
+
+    @NonNull
+    @Override
+    public Single<Long> longValue(final DatabaseWrapper databaseWrapper) {
+        return fromCallable(new Callable<Long>() {
+            @Override
+            public Long call() throws Exception {
+                return getInnerQueriable().longValue(databaseWrapper);
             }
         });
     }

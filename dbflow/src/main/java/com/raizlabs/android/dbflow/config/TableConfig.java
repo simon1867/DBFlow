@@ -1,7 +1,7 @@
 package com.raizlabs.android.dbflow.config;
 
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.raizlabs.android.dbflow.sql.queriable.ListModelLoader;
 import com.raizlabs.android.dbflow.sql.queriable.SingleModelLoader;
@@ -15,6 +15,10 @@ import java.util.List;
  * certain configuration options for a table.
  */
 public final class TableConfig<TModel> {
+
+    public static <TModel> TableConfig.Builder<TModel> builder(Class<TModel> tableClass) {
+        return new TableConfig.Builder<>(tableClass);
+    }
 
     private final Class<TModel> tableClass;
     private final ModelSaver<TModel> modelSaver;
