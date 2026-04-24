@@ -1,9 +1,10 @@
 package com.raizlabs.android.dbflow.list
 
-import com.nhaarman.mockito_kotlin.argumentCaptor
-import com.nhaarman.mockito_kotlin.mock
-import com.nhaarman.mockito_kotlin.verify
+import com.nhaarman.mockitokotlin2.argumentCaptor
+import com.nhaarman.mockitokotlin2.mock
+import com.nhaarman.mockitokotlin2.verify
 import com.raizlabs.android.dbflow.BaseUnitTest
+import org.robolectric.shadows.ShadowLooper
 import com.raizlabs.android.dbflow.kotlinextensions.from
 import com.raizlabs.android.dbflow.kotlinextensions.select
 import com.raizlabs.android.dbflow.models.SimpleModel
@@ -52,6 +53,7 @@ class FlowQueryListTest : BaseUnitTest() {
             .error(mockError)
             .build()
         list += SimpleModel("1")
+        ShadowLooper.idleMainLooper()
 
         // verify added
         assertEquals(1, list.count)
@@ -61,24 +63,31 @@ class FlowQueryListTest : BaseUnitTest() {
         verify(mockSuccess).onSuccess(argumentCaptor<Transaction>().capture())
 
         list -= SimpleModel("1")
+        ShadowLooper.idleMainLooper()
         assertEquals(0, list.count)
 
         list += SimpleModel("1")
+        ShadowLooper.idleMainLooper()
         list.removeAt(0)
+        ShadowLooper.idleMainLooper()
         assertEquals(0, list.count)
 
         val elements = arrayListOf(SimpleModel("1"), SimpleModel("2"))
         list.addAll(elements)
+        ShadowLooper.idleMainLooper()
         assertEquals(2, list.count)
         list.removeAll(elements)
+        ShadowLooper.idleMainLooper()
         assertEquals(0, list.count)
 
         list.addAll(elements)
+        ShadowLooper.idleMainLooper()
 
         val typedArray = list.toTypedArray()
         assertEquals(typedArray.size, list.size)
 
         list.clear()
+        ShadowLooper.idleMainLooper()
         assertEquals(0, list.size)
     }
 

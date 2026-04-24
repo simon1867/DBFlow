@@ -1,6 +1,7 @@
 package com.raizlabs.android.dbflow.sql.queriable
 
 import com.raizlabs.android.dbflow.BaseUnitTest
+import org.robolectric.shadows.ShadowLooper
 import com.raizlabs.android.dbflow.kotlinextensions.async
 import com.raizlabs.android.dbflow.kotlinextensions.cursorResult
 import com.raizlabs.android.dbflow.kotlinextensions.from
@@ -24,6 +25,7 @@ class AsyncQueryTest : BaseUnitTest() {
         (select from SimpleModel::class).async result { _, result ->
             model = result
         }
+        ShadowLooper.idleMainLooper()
         assertNotNull(model)
         assertEquals("name", model?.name)
     }
@@ -37,6 +39,7 @@ class AsyncQueryTest : BaseUnitTest() {
         (select from SimpleModel::class).async list { _, mutableList ->
             list = mutableList
         }
+        ShadowLooper.idleMainLooper()
         assertEquals(2, list.size)
     }
 
@@ -49,6 +52,7 @@ class AsyncQueryTest : BaseUnitTest() {
         (select from SimpleModel::class).async cursorResult { _, cursorResult ->
             result = cursorResult
         }
+        ShadowLooper.idleMainLooper()
         assertNotNull(result)
         assertEquals(2L, result?.count)
         result?.close()
