@@ -15,11 +15,19 @@ import com.raizlabs.android.dbflow.processor.ProcessorManager
 import com.raizlabs.android.dbflow.processor.definition.BaseTableDefinition
 import com.raizlabs.android.dbflow.processor.definition.QueryModelDefinition
 import com.raizlabs.android.dbflow.processor.definition.TableDefinition
+import com.google.devtools.ksp.getAllSuperTypes
+import com.google.devtools.ksp.symbol.Origin
 import com.raizlabs.android.dbflow.processor.utils.annotation
+import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
 import com.raizlabs.android.dbflow.processor.utils.fromTypeMirror
+import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
+import com.raizlabs.android.dbflow.processor.utils.getEnumArgument
+import com.raizlabs.android.dbflow.processor.utils.getKsTypeArgument
 import com.raizlabs.android.dbflow.processor.utils.implementsClass
 import com.raizlabs.android.dbflow.processor.utils.isNullOrEmpty
 import com.raizlabs.android.dbflow.processor.utils.isSubclass
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetClassName
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetTypeName
 import com.raizlabs.android.dbflow.processor.utils.toTypeElement
 import com.raizlabs.android.dbflow.processor.utils.toTypeErasedElement
 import com.raizlabs.android.dbflow.sql.QueryBuilder
@@ -428,6 +436,101 @@ class ReferenceColumnDefinition(manager: ProcessorManager, tableDefinition: Base
 
             if (nonModelColumn && _referenceDefinitionList.size == 1) {
                 columnName = _referenceDefinitionList[0].columnName
+            }
+        }
+    }
+
+    override fun kspInit(property: com.google.devtools.ksp.symbol.KSPropertyDeclaration) {
+        val ksType = property.type.resolve()
+        elementName = property.simpleName.asString()
+        elementTypeName = ksType.toJavaPoetTypeName()
+        elementClassName = (ksType.declaration as? com.google.devtools.ksp.symbol.KSClassDeclaration)
+            ?.toJavaPoetClassName()
+        packageName = property.parentDeclaration?.packageName?.asString() ?: ""
+
+        isNullableType = ksType.isMarkedNullable
+        isNotNullType = false // FK fields must be nullable
+
+        val nameAllocator = com.squareup.javapoet.NameAllocator()
+        columnName = elementName
+        propertyFieldName = nameAllocator.newName(columnName)
+
+        // Accessor for the FK field itself (e.g. model.author)
+        val isPrivate = com.google.devtools.ksp.symbol.Modifier.PRIVATE in property.modifiers
+        val isKotlinOrigin = property.origin == Origin.KOTLIN || property.origin == Origin.KOTLIN_LIB
+        val hasJvmField = property.annotations.any {
+            it.annotationType.resolve().declaration.qualifiedName?.asString() == "kotlin.jvm.JvmField"
+        }
+        val useDirectAccess = if (!isKotlinOrigin) !isPrivate else (!isPrivate && hasJvmField)
+        columnAccessor = if (!useDirectAccess) {
+            PrivateScopeColumnAccessor(elementName, object : GetterSetter {
+                override val getterName: String = ""
+                override val setterName: String = ""
+            })
+        } else {
+            VisibleScopeColumnAccessor(elementName)
+        }
+        combiner = Combiner(columnAccessor, elementTypeName!!, wrapperAccessor, wrapperTypeName, subWrapperAccessor)
+
+        // @PrimaryKey — FK primary keys are composite keys (not autoincrement)
+        val pkAnnot = property.findKspAnnotation<com.raizlabs.android.dbflow.annotation.PrimaryKey>()
+        if (pkAnnot != null) {
+            val rowId = pkAnnot.getBooleanArgument("rowID") ?: false
+            when {
+                rowId -> isRowId = true
+                else -> isPrimaryKey = true
+            }
+        }
+
+        // @ForeignKey
+        val fkAnnot = property.findKspAnnotation<com.raizlabs.android.dbflow.annotation.ForeignKey>() ?: return
+
+        val onDeleteStr = fkAnnot.getEnumArgument("onDelete") ?: "NO_ACTION"
+        val onUpdateStr = fkAnnot.getEnumArgument("onUpdate") ?: "NO_ACTION"
+        onDelete = runCatching { ForeignKeyAction.valueOf(onDeleteStr) }.getOrDefault(ForeignKeyAction.NO_ACTION)
+        onUpdate = runCatching { ForeignKeyAction.valueOf(onUpdateStr) }.getOrDefault(ForeignKeyAction.NO_ACTION)
+        deferred = fkAnnot.getBooleanArgument("deferred") ?: false
+        isStubbedRelationship = fkAnnot.getBooleanArgument("stubbedRelationship") ?: false
+        saveForeignKeyModel = fkAnnot.getBooleanArgument("saveForeignKeyModel") ?: false
+        deleteForeignKeyModel = fkAnnot.getBooleanArgument("deleteForeignKeyModel") ?: false
+
+        // tableClass override (if not TypeConverter base)
+        val tableKsType = fkAnnot.getKsTypeArgument("tableClass")
+        val tableQName = tableKsType?.declaration?.qualifiedName?.asString()
+        if (tableQName != null && tableQName != "kotlin.Any" && tableQName != "java.lang.Object") {
+            referencedClassName = (tableKsType.declaration as? com.google.devtools.ksp.symbol.KSClassDeclaration)
+                ?.toJavaPoetClassName()
+        }
+
+        // Determine referenced class from field type if not set via tableClass
+        if (referencedClassName == null || referencedClassName == ClassName.OBJECT) {
+            val decl = ksType.declaration as? com.google.devtools.ksp.symbol.KSClassDeclaration
+            referencedClassName = decl?.toJavaPoetClassName()
+        }
+
+        // Determine if the referenced type is a model
+        val referencedDecl = (ksType.declaration as? com.google.devtools.ksp.symbol.KSClassDeclaration)
+        if (referencedDecl != null) {
+            val superTypeNames = referencedDecl.getAllSuperTypes()
+                .mapNotNull { it.declaration.qualifiedName?.asString() }.toSet()
+            extendsBaseModel = ClassNames.BASE_MODEL.toString() in superTypeNames
+            implementsModel = ClassNames.MODEL.toString() in superTypeNames
+            isReferencingTableObject = implementsModel ||
+                    referencedDecl.findKspAnnotation<com.raizlabs.android.dbflow.annotation.Table>() != null
+            nonModelColumn = !isReferencingTableObject
+        }
+
+        // @ForeignKeyReference array
+        @Suppress("UNCHECKED_CAST")
+        val refAnnotations = fkAnnot.arguments
+            .find { it.name?.asString() == "references" }
+            ?.value as? List<com.google.devtools.ksp.symbol.KSAnnotation>
+        if (!refAnnotations.isNullOrEmpty()) {
+            references = refAnnotations.mapNotNull { refAnnot ->
+                val colName = (refAnnot.arguments.find { it.name?.asString() == "columnName" }?.value as? String) ?: return@mapNotNull null
+                val fkColName = (refAnnot.arguments.find { it.name?.asString() == "foreignKeyColumnName" }?.value as? String) ?: ""
+                ReferenceSpecificationDefinition(columnName = colName, referenceName = fkColName,
+                    onNullConflictAction = ConflictAction.NONE)
             }
         }
     }

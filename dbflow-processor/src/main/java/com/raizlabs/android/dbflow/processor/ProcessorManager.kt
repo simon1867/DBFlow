@@ -14,7 +14,6 @@ import com.raizlabs.android.dbflow.processor.definition.TableEndpointDefinition
 import com.raizlabs.android.dbflow.processor.definition.TypeConverterDefinition
 import com.raizlabs.android.dbflow.processor.utils.WriterUtils
 import com.squareup.javapoet.ClassName
-import com.squareup.javapoet.JavaFile
 import com.squareup.javapoet.TypeName
 import java.io.IOException
 import java.util.*
@@ -32,7 +31,7 @@ import kotlin.reflect.KClass
  * Description: The main object graph during processing. This class collects all of the
  * processor classes and writes them to the corresponding database holders.
  */
-class ProcessorManager internal constructor(val processingEnvironment: ProcessingEnvironment) : Handler {
+open class ProcessorManager internal constructor(val processingEnvironment: ProcessingEnvironment? = null) : Handler {
 
     companion object {
         lateinit var manager: ProcessorManager
@@ -55,11 +54,28 @@ class ProcessorManager internal constructor(val processingEnvironment: Processin
         containerHandlers.forEach { handlers.add(it) }
     }
 
-    val messager: Messager = processingEnvironment.messager
+    /** Overridable file-writing abstraction; KSP subclass supplies a CodeGenerator-backed writer. */
+    open fun writeJavaFile(packageName: String, typeSpec: com.squareup.javapoet.TypeSpec) {
+        if (processingEnvironment == null) return
+        try {
+            com.squareup.javapoet.JavaFile.builder(packageName, typeSpec).build()
+                .writeTo(processingEnvironment.filer)
+        } catch (e: java.io.IOException) { /* ignored */ }
+        catch (e: FilerException) { /* already written */ }
+    }
 
-    val typeUtils: Types = processingEnvironment.typeUtils
+    open val messager: Messager = processingEnvironment?.messager ?: SilentMessager
 
-    val elements: Elements = processingEnvironment.elementUtils
+    open val typeUtils: Types = processingEnvironment?.typeUtils ?: NoOpTypes()
+
+    open val elements: Elements = processingEnvironment?.elementUtils ?: NoOpElements()
+
+    private object SilentMessager : Messager {
+        override fun printMessage(kind: Diagnostic.Kind?, msg: CharSequence?) {}
+        override fun printMessage(kind: Diagnostic.Kind?, msg: CharSequence?, e: Element?) {}
+        override fun printMessage(kind: Diagnostic.Kind?, msg: CharSequence?, e: Element?, a: javax.lang.model.element.AnnotationMirror?) {}
+        override fun printMessage(kind: Diagnostic.Kind?, msg: CharSequence?, e: Element?, a: javax.lang.model.element.AnnotationMirror?, v: javax.lang.model.element.AnnotationValue?) {}
+    }
 
     fun addDatabase(database: TypeName) {
         if (!uniqueDatabases.contains(database)) {
@@ -296,8 +312,7 @@ class ProcessorManager internal constructor(val processingEnvironment: Processin
                 if (roundEnvironment.processingOver()) {
                     databaseHolderDefinition.databaseDefinition?.let {
                         if (it.outputClassName != null) {
-                            JavaFile.builder(it.packageName, it.typeSpec).build()
-                                .writeTo(processorManager.processingEnvironment.filer)
+                            processorManager.writeJavaFile(it.packageName, it.typeSpec)
                         }
                     }
                 }
@@ -317,24 +332,26 @@ class ProcessorManager internal constructor(val processingEnvironment: Processin
                     .sortedBy { it.outputClassName?.simpleName() }
                 queryModelDefinitions.forEach { WriterUtils.writeBaseDefinition(it, processorManager) }
 
-                tableDefinitions.forEach {
-                    try {
-                        it.writePackageHelper(processorManager.processingEnvironment)
-                    } catch (e: FilerException) { /*Ignored intentionally to allow multi-round table generation*/
+                if (processorManager.processingEnvironment != null) {
+                    tableDefinitions.forEach {
+                        try {
+                            it.writePackageHelper(processorManager.processingEnvironment)
+                        } catch (e: FilerException) { /*Ignored intentionally to allow multi-round table generation*/
+                        }
                     }
-                }
 
-                modelViewDefinitions.forEach {
-                    try {
-                        it.writePackageHelper(processorManager.processingEnvironment)
-                    } catch (e: FilerException) { /*Ignored intentionally to allow multi-round table generation*/
+                    modelViewDefinitions.forEach {
+                        try {
+                            it.writePackageHelper(processorManager.processingEnvironment)
+                        } catch (e: FilerException) { /*Ignored intentionally to allow multi-round table generation*/
+                        }
                     }
-                }
 
-                queryModelDefinitions.forEach {
-                    try {
-                        it.writePackageHelper(processorManager.processingEnvironment)
-                    } catch (e: FilerException) { /*Ignored intentionally to allow multi-round table generation*/
+                    queryModelDefinitions.forEach {
+                        try {
+                            it.writePackageHelper(processorManager.processingEnvironment)
+                        } catch (e: FilerException) { /*Ignored intentionally to allow multi-round table generation*/
+                        }
                     }
                 }
             } catch (e: IOException) {
@@ -345,9 +362,7 @@ class ProcessorManager internal constructor(val processingEnvironment: Processin
         try {
             val databaseHolderDefinition = DatabaseHolderDefinition(processorManager)
             if (!databaseHolderDefinition.isGarbage()) {
-                JavaFile.builder(ClassNames.FLOW_MANAGER_PACKAGE,
-                    databaseHolderDefinition.typeSpec).build()
-                    .writeTo(processorManager.processingEnvironment.filer)
+                processorManager.writeJavaFile(ClassNames.FLOW_MANAGER_PACKAGE, databaseHolderDefinition.typeSpec)
             }
         } catch (e: FilerException) {
         } catch (e: IOException) {

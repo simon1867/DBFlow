@@ -32,7 +32,9 @@ object ElementUtility {
     }
 
     fun isInSamePackage(manager: ProcessorManager, elementToCheck: Element, original: Element): Boolean {
-        return manager.elements.getPackageOf(elementToCheck).toString() == manager.elements.getPackageOf(original).toString()
+        val pkg1 = manager.elements.getPackageOf(elementToCheck)?.toString() ?: return true
+        val pkg2 = manager.elements.getPackageOf(original)?.toString() ?: return true
+        return pkg1 == pkg2
     }
 
     fun isPackagePrivate(element: Element): Boolean {

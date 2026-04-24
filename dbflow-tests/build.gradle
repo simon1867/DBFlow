@@ -1,8 +1,6 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
-apply plugin: 'kotlin-kapt'
-// Uncomment when the dbflow-processor implements SymbolProcessor (KSP):
-// apply plugin: 'com.google.devtools.ksp'
+apply plugin: 'com.google.devtools.ksp'
 
 android {
     compileSdkVersion 34
@@ -44,9 +42,7 @@ android {
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
 
-    kapt project("${dbflow_project_prefix}dbflow-processor")
-    // Replace kapt with ksp below once the processor implements SymbolProcessor:
-    // ksp project("${dbflow_project_prefix}dbflow-processor")
+    ksp project("${dbflow_project_prefix}dbflow-processor")
     implementation project(':dbflow')
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation project("${dbflow_project_prefix}dbflow")
@@ -57,8 +53,8 @@ dependencies {
     implementation project("${dbflow_project_prefix}dbflow-rx2")
     implementation project("${dbflow_project_prefix}dbflow-rx2-kotlinextensions")
 
-    kaptTest project("${dbflow_project_prefix}dbflow-processor")
-    kaptAndroidTest project("${dbflow_project_prefix}dbflow-processor")
+    kspTest project("${dbflow_project_prefix}dbflow-processor")
+    kspAndroidTest project("${dbflow_project_prefix}dbflow-processor")
 
     testImplementation 'org.glassfish:javax.annotation:10.0-b28'
     testImplementation 'junit:junit:4.13.2'

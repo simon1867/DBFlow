@@ -15,6 +15,8 @@ import com.grosner.kpoet.protected
 import com.grosner.kpoet.public
 import com.grosner.kpoet.statement
 import com.grosner.kpoet.switch
+import com.google.devtools.ksp.getAllSuperTypes
+import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.raizlabs.android.dbflow.annotation.Column
 import com.raizlabs.android.dbflow.annotation.ColumnMap
 import com.raizlabs.android.dbflow.annotation.ConflictAction
@@ -28,6 +30,7 @@ import com.raizlabs.android.dbflow.annotation.PrimaryKey
 import com.raizlabs.android.dbflow.annotation.Table
 import com.raizlabs.android.dbflow.processor.ClassNames
 import com.raizlabs.android.dbflow.processor.ColumnValidator
+import com.raizlabs.android.dbflow.processor.KSP_SENTINEL_ELEMENT
 import com.raizlabs.android.dbflow.processor.OneToManyValidator
 import com.raizlabs.android.dbflow.processor.ProcessorManager
 import com.raizlabs.android.dbflow.processor.definition.BindToStatementMethod.Mode.*
@@ -40,8 +43,15 @@ import com.raizlabs.android.dbflow.processor.utils.ModelUtils.wrapper
 import com.raizlabs.android.dbflow.processor.utils.`override fun`
 import com.raizlabs.android.dbflow.processor.utils.annotation
 import com.raizlabs.android.dbflow.processor.utils.ensureVisibleStatic
+import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
+import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
+import com.raizlabs.android.dbflow.processor.utils.getEnumArgument
+import com.raizlabs.android.dbflow.processor.utils.getKsTypeArgument
+import com.raizlabs.android.dbflow.processor.utils.getStringArgument
 import com.raizlabs.android.dbflow.processor.utils.implementsClass
 import com.raizlabs.android.dbflow.processor.utils.isNullOrEmpty
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetClassName
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetTypeName
 import com.raizlabs.android.dbflow.sql.QueryBuilder
 import com.squareup.javapoet.ArrayTypeName
 import com.squareup.javapoet.ClassName
@@ -61,7 +71,7 @@ import javax.lang.model.type.MirroredTypeException
 /**
  * Description: Used in writing ModelAdapters
  */
-class TableDefinition(manager: ProcessorManager, element: TypeElement) : BaseTableDefinition(element, manager) {
+class TableDefinition(manager: ProcessorManager, element: javax.lang.model.element.Element) : BaseTableDefinition(element, manager) {
 
     var tableName: String? = null
 
@@ -99,6 +109,10 @@ class TableDefinition(manager: ProcessorManager, element: TypeElement) : BaseTab
     var columnUniqueMap = mutableMapOf<Int, MutableSet<ColumnDefinition>>()
 
     var oneToManyDefinitions = mutableListOf<OneToManyDefinition>()
+
+    /** Set to true when this definition is populated via [kspInit] rather than from a TypeElement. */
+    internal var kspMode = false
+    internal var ksClassDeclaration: KSClassDeclaration? = null
 
     var inheritedColumnMap = hashMapOf<String, InheritedColumn>()
     var inheritedFieldNameList = mutableListOf<String>()
@@ -155,14 +169,14 @@ class TableDefinition(manager: ProcessorManager, element: TypeElement) : BaseTab
                 inheritedPrimaryKeyMap.put(it.fieldName, it)
             }
 
-            implementsLoadFromCursorListener = element.implementsClass(manager.processingEnvironment,
-                    ClassNames.LOAD_FROM_CURSOR_LISTENER)
+            implementsLoadFromCursorListener = typeElement?.implementsClass(manager.processingEnvironment,
+                    ClassNames.LOAD_FROM_CURSOR_LISTENER) ?: false
 
-            implementsContentValuesListener = element.implementsClass(manager.processingEnvironment,
-                    ClassNames.CONTENT_VALUES_LISTENER)
+            implementsContentValuesListener = typeElement?.implementsClass(manager.processingEnvironment,
+                    ClassNames.CONTENT_VALUES_LISTENER) ?: false
 
-            implementsSqlStatementListener = element.implementsClass(manager.processingEnvironment,
-                    ClassNames.SQLITE_STATEMENT_LISTENER)
+            implementsSqlStatementListener = typeElement?.implementsClass(manager.processingEnvironment,
+                    ClassNames.SQLITE_STATEMENT_LISTENER) ?: false
         }
 
         methods = arrayOf(BindToContentValuesMethod(this, true, implementsContentValuesListener),
@@ -180,78 +194,6 @@ class TableDefinition(manager: ProcessorManager, element: TypeElement) : BaseTab
                 OneToManySaveMethod(this, OneToManySaveMethod.METHOD_SAVE, true),
                 OneToManySaveMethod(this, OneToManySaveMethod.METHOD_INSERT, true),
                 OneToManySaveMethod(this, OneToManySaveMethod.METHOD_UPDATE, true))
-    }
-
-    override fun prepareForWrite() {
-        columnDefinitions = ArrayList<ColumnDefinition>()
-        columnMap.clear()
-        classElementLookUpMap.clear()
-        _primaryColumnDefinitions.clear()
-        uniqueGroupsDefinitions.clear()
-        indexGroupsDefinitions.clear()
-        foreignKeyDefinitions.clear()
-        columnUniqueMap.clear()
-        oneToManyDefinitions.clear()
-        customCacheFieldName = null
-        customMultiCacheFieldName = null
-
-        val table = element.getAnnotation(Table::class.java)
-        if (table != null) {
-            databaseDefinition = manager.getDatabaseHolderDefinition(databaseTypeName)?.databaseDefinition
-            if (databaseDefinition == null) {
-                manager.logError("DatabaseDefinition was null for : $tableName for db type: $databaseTypeName")
-            }
-            databaseDefinition?.let {
-
-                setOutputClassName("${it.classSeparator}Table")
-
-                // globular default
-                var insertConflict = table.insertConflict
-                if (insertConflict == ConflictAction.NONE && it.insertConflict != ConflictAction.NONE) {
-                    insertConflict = it.insertConflict ?: ConflictAction.NONE
-                }
-
-                var updateConflict = table.updateConflict
-                if (updateConflict == ConflictAction.NONE && it.updateConflict != ConflictAction.NONE) {
-                    updateConflict = it.updateConflict ?: ConflictAction.NONE
-                }
-
-                val primaryKeyConflict = table.primaryKeyConflict
-
-                insertConflictActionName = if (insertConflict == ConflictAction.NONE) "" else insertConflict.name
-                updateConflictActionName = if (updateConflict == ConflictAction.NONE) "" else updateConflict.name
-                primaryKeyConflictActionName = if (primaryKeyConflict == ConflictAction.NONE) "" else primaryKeyConflict.name
-            }
-
-            typeElement?.let { createColumnDefinitions(it) }
-
-            val groups = table.uniqueColumnGroups
-            var uniqueNumbersSet: MutableSet<Int> = HashSet()
-            for (uniqueGroup in groups) {
-                if (uniqueNumbersSet.contains(uniqueGroup.groupNumber)) {
-                    manager.logError("A duplicate unique group with number %1s was found for %1s", uniqueGroup.groupNumber, tableName)
-                }
-                val definition = UniqueGroupsDefinition(uniqueGroup)
-                columnDefinitions.filter { it.uniqueGroups.contains(definition.number) }
-                        .forEach { definition.addColumnDefinition(it) }
-                uniqueGroupsDefinitions.add(definition)
-                uniqueNumbersSet.add(uniqueGroup.groupNumber)
-            }
-
-            val indexGroups = table.indexGroups
-            uniqueNumbersSet = HashSet<Int>()
-            for (indexGroup in indexGroups) {
-                if (uniqueNumbersSet.contains(indexGroup.number)) {
-                    manager.logError(TableDefinition::class, "A duplicate unique index number %1s was found for %1s", indexGroup.number, elementName)
-                }
-                val definition = IndexGroupsDefinition(this, indexGroup)
-                columnDefinitions.filter { it.indexGroups.contains(definition.indexNumber) }
-                        .forEach { definition.columnDefinitionList.add(it) }
-                indexGroupsDefinitions.add(definition)
-                uniqueNumbersSet.add(indexGroup.number)
-            }
-        }
-
     }
 
     override fun createColumnDefinitions(typeElement: TypeElement) {
@@ -348,7 +290,7 @@ class TableDefinition(manager: ProcessorManager, element: TypeElement) : BaseTab
                     }
                 }
             } else if (element.annotation<OneToMany>() != null) {
-                val oneToManyDefinition = OneToManyDefinition(element as ExecutableElement, manager, elements)
+                val oneToManyDefinition = OneToManyDefinition(element, manager, elements)
                 if (oneToManyValidator.validate(manager, oneToManyDefinition)) {
                     oneToManyDefinitions.add(oneToManyDefinition)
                 }
@@ -365,6 +307,325 @@ class TableDefinition(manager: ProcessorManager, element: TypeElement) : BaseTab
                     manager.logError("MultiCacheField can only be declared once from: " + typeElement)
                 } else {
                     customMultiCacheFieldName = element.simpleName.toString()
+                }
+            }
+        }
+    }
+
+    /**
+     * KSP initialiser. Reads @Table annotation data from KSP instead of the KAPT init block.
+     * Must be called right after construction when the definition is created in KSP mode.
+     */
+    fun kspInit(ksClass: KSClassDeclaration) {
+        kspMode = true
+        ksClassDeclaration = ksClass
+
+        elementName = ksClass.simpleName.asString()
+        elementClassName = ksClass.toJavaPoetClassName()
+        elementTypeName = elementClassName
+        packageName = ksClass.packageName.asString()
+
+        val annot = ksClass.findKspAnnotation<Table>() ?: return
+
+        tableName = annot.getStringArgument("name").takeIf { !it.isNullOrEmpty() } ?: elementName
+
+        val dbKsType = annot.getKsTypeArgument("database")
+        databaseTypeName = dbKsType?.toJavaPoetTypeName()
+
+        cachingEnabled = annot.getBooleanArgument("cachingEnabled") ?: false
+        cacheSize = annot.arguments.find { it.name?.asString() == "cacheSize" }?.value as? Int ?: 0
+        orderedCursorLookUp = annot.getBooleanArgument("orderedCursorLookUp") ?: false
+        assignDefaultValuesFromCursor = annot.getBooleanArgument("assignDefaultValuesFromCursor") ?: true
+        createWithDatabase = annot.getBooleanArgument("createWithDatabase") ?: true
+        allFields = annot.getBooleanArgument("allFields") ?: false
+        useIsForPrivateBooleans = annot.getBooleanArgument("useBooleanGetterSetters") ?: true
+
+        elementClassName?.let { databaseTypeName?.let { dbt -> manager.addModelToDatabase(it, dbt) } }
+
+        // Interface checks via KSP super types
+        val superTypes = ksClass.getAllSuperTypes().map { it.declaration.qualifiedName?.asString() }
+        implementsLoadFromCursorListener = ClassNames.LOAD_FROM_CURSOR_LISTENER.toString() in superTypes
+        implementsContentValuesListener = ClassNames.CONTENT_VALUES_LISTENER.toString() in superTypes
+        implementsSqlStatementListener = ClassNames.SQLITE_STATEMENT_LISTENER.toString() in superTypes
+    }
+
+    override fun prepareForWrite() {
+        columnDefinitions = ArrayList()
+        columnMap.clear()
+        classElementLookUpMap.clear()
+        _primaryColumnDefinitions.clear()
+        uniqueGroupsDefinitions.clear()
+        indexGroupsDefinitions.clear()
+        foreignKeyDefinitions.clear()
+        columnUniqueMap.clear()
+        oneToManyDefinitions.clear()
+        customCacheFieldName = null
+        customMultiCacheFieldName = null
+
+        if (kspMode) {
+            prepareForWriteKsp()
+            return
+        }
+
+        val table = element.getAnnotation(Table::class.java)
+        if (table != null) {
+            databaseDefinition = manager.getDatabaseHolderDefinition(databaseTypeName)?.databaseDefinition
+            if (databaseDefinition == null) {
+                manager.logError("DatabaseDefinition was null for : $tableName for db type: $databaseTypeName")
+            }
+            databaseDefinition?.let {
+                setOutputClassName("${it.classSeparator}Table")
+
+                var insertConflict = table.insertConflict
+                if (insertConflict == ConflictAction.NONE && it.insertConflict != ConflictAction.NONE) {
+                    insertConflict = it.insertConflict ?: ConflictAction.NONE
+                }
+
+                var updateConflict = table.updateConflict
+                if (updateConflict == ConflictAction.NONE && it.updateConflict != ConflictAction.NONE) {
+                    updateConflict = it.updateConflict ?: ConflictAction.NONE
+                }
+
+                val primaryKeyConflict = table.primaryKeyConflict
+
+                insertConflictActionName = if (insertConflict == ConflictAction.NONE) "" else insertConflict.name
+                updateConflictActionName = if (updateConflict == ConflictAction.NONE) "" else updateConflict.name
+                primaryKeyConflictActionName = if (primaryKeyConflict == ConflictAction.NONE) "" else primaryKeyConflict.name
+            }
+
+            typeElement?.let { createColumnDefinitions(it) }
+
+            val groups = table.uniqueColumnGroups
+            var uniqueNumbersSet: MutableSet<Int> = HashSet()
+            for (uniqueGroup in groups) {
+                if (uniqueNumbersSet.contains(uniqueGroup.groupNumber)) {
+                    manager.logError("A duplicate unique group with number %1s was found for %1s", uniqueGroup.groupNumber, tableName)
+                }
+                val definition = UniqueGroupsDefinition(uniqueGroup)
+                columnDefinitions.filter { it.uniqueGroups.contains(definition.number) }
+                        .forEach { definition.addColumnDefinition(it) }
+                uniqueGroupsDefinitions.add(definition)
+                uniqueNumbersSet.add(uniqueGroup.groupNumber)
+            }
+
+            val indexGroups = table.indexGroups
+            uniqueNumbersSet = HashSet()
+            for (indexGroup in indexGroups) {
+                if (uniqueNumbersSet.contains(indexGroup.number)) {
+                    manager.logError(TableDefinition::class, "A duplicate unique index number %1s was found for %1s", indexGroup.number, elementName)
+                }
+                val definition = IndexGroupsDefinition(this, indexGroup)
+                columnDefinitions.filter { it.indexGroups.contains(definition.indexNumber) }
+                        .forEach { definition.columnDefinitionList.add(it) }
+                indexGroupsDefinitions.add(definition)
+                uniqueNumbersSet.add(indexGroup.number)
+            }
+        }
+    }
+
+    private fun prepareForWriteKsp() {
+        val ksClass = ksClassDeclaration ?: return
+        databaseDefinition = manager.getDatabaseHolderDefinition(databaseTypeName)?.databaseDefinition
+        if (databaseDefinition == null) {
+            manager.logError("DatabaseDefinition was null for KSP table: $tableName for db type: $databaseTypeName")
+            return
+        }
+
+        // Determine whether the class has a usable no-arg constructor.
+        // In Kotlin, a primary ctor where all params have defaults generates a synthetic no-arg ctor.
+        val primaryCtor = ksClass.primaryConstructor
+        hasPrimaryConstructor = if (primaryCtor == null) {
+            true // implicit no-arg constructor
+        } else {
+            com.google.devtools.ksp.symbol.Modifier.PRIVATE !in primaryCtor.modifiers &&
+                (primaryCtor.parameters.isEmpty() || primaryCtor.parameters.all { it.hasDefault })
+        }
+
+        databaseDefinition?.let { dbDef ->
+            setOutputClassName("${dbDef.classSeparator}Table")
+
+            val annot = ksClass.findKspAnnotation<Table>()
+            val insertConflictName = annot?.getEnumArgument("insertConflict") ?: "NONE"
+            val updateConflictName = annot?.getEnumArgument("updateConflict") ?: "NONE"
+            val primaryKeyConflictName = annot?.getEnumArgument("primaryKeyConflict") ?: "NONE"
+
+            var insertConflict = runCatching { ConflictAction.valueOf(insertConflictName) }.getOrDefault(ConflictAction.NONE)
+            if (insertConflict == ConflictAction.NONE && dbDef.insertConflict != ConflictAction.NONE) {
+                insertConflict = dbDef.insertConflict ?: ConflictAction.NONE
+            }
+            var updateConflict = runCatching { ConflictAction.valueOf(updateConflictName) }.getOrDefault(ConflictAction.NONE)
+            if (updateConflict == ConflictAction.NONE && dbDef.updateConflict != ConflictAction.NONE) {
+                updateConflict = dbDef.updateConflict ?: ConflictAction.NONE
+            }
+            val primaryKeyConflict = runCatching { ConflictAction.valueOf(primaryKeyConflictName) }.getOrDefault(ConflictAction.NONE)
+
+            insertConflictActionName = if (insertConflict == ConflictAction.NONE) "" else insertConflict.name
+            updateConflictActionName = if (updateConflict == ConflictAction.NONE) "" else updateConflict.name
+            primaryKeyConflictActionName = if (primaryKeyConflict == ConflictAction.NONE) "" else primaryKeyConflict.name
+        }
+
+        createColumnDefinitionsFromKsp(ksClass)
+    }
+
+    // KSP's getAllProperties() skips private members from superclasses; we need them too (e.g.
+    // @PrimaryKey private Integer id in a Java superclass). Collect own declarations + all
+    // superclass declarations without a private-visibility filter.
+    private fun collectAllPropertiesIncludingInherited(
+        decl: KSClassDeclaration,
+        seen: MutableSet<String> = mutableSetOf()
+    ): List<com.google.devtools.ksp.symbol.KSPropertyDeclaration> {
+        val result = mutableListOf<com.google.devtools.ksp.symbol.KSPropertyDeclaration>()
+        for (prop in decl.declarations.filterIsInstance<com.google.devtools.ksp.symbol.KSPropertyDeclaration>()) {
+            if (seen.add(prop.simpleName.asString())) result.add(prop)
+        }
+        for (superTypeRef in decl.superTypes) {
+            val superDecl = superTypeRef.resolve().declaration as? KSClassDeclaration ?: continue
+            val qName = superDecl.qualifiedName?.asString() ?: continue
+            if (qName == "java.lang.Object" || qName == "kotlin.Any") continue
+            result.addAll(collectAllPropertiesIncludingInherited(superDecl, seen))
+        }
+        return result
+    }
+
+    private fun createColumnDefinitionsFromKsp(ksClass: KSClassDeclaration) {
+        // Collect all properties including private ones from superclasses.
+        val allProperties = collectAllPropertiesIncludingInherited(ksClass)
+
+        // Pre-populate classElementLookUpMap so ColumnValidator's getter/setter checks pass.
+        // Kotlin generates get/set accessors for every var property that lacks @JvmField.
+        for (property in allProperties) {
+            val name = property.simpleName.asString()
+            classElementLookUpMap[name] = KSP_SENTINEL_ELEMENT
+            val cap = name.replaceFirstChar { it.uppercase() }
+            classElementLookUpMap["get$cap"] = KSP_SENTINEL_ELEMENT
+            classElementLookUpMap["set$cap"] = KSP_SENTINEL_ELEMENT
+            // Boolean "isXxx" → getter stays "isXxx", setter becomes "setXxx"
+            if (name.startsWith("is", ignoreCase = true)) {
+                classElementLookUpMap[name] = KSP_SENTINEL_ELEMENT
+                val withoutIs = name.removePrefix("is").removePrefix("Is")
+                    .replaceFirstChar { it.uppercase() }
+                classElementLookUpMap["set$withoutIs"] = KSP_SENTINEL_ELEMENT
+            }
+        }
+        // Also add functions from the whole hierarchy (needed for Java getter/setter presence checks)
+        fun addFunctions(decl: KSClassDeclaration) {
+            for (fn in decl.declarations.filterIsInstance<com.google.devtools.ksp.symbol.KSFunctionDeclaration>()) {
+                classElementLookUpMap[fn.simpleName.asString()] = KSP_SENTINEL_ELEMENT
+            }
+            for (superTypeRef in decl.superTypes) {
+                val superDecl = superTypeRef.resolve().declaration as? KSClassDeclaration ?: continue
+                val qName = superDecl.qualifiedName?.asString() ?: continue
+                if (qName == "java.lang.Object" || qName == "kotlin.Any") continue
+                addFunctions(superDecl)
+            }
+        }
+        addFunctions(ksClass)
+
+        // Scan companion objects for @MultiCacheField and @ModelCacheField properties
+        for (decl in ksClass.declarations) {
+            val companion = decl as? KSClassDeclaration ?: continue
+            if (!companion.isCompanionObject) continue
+            for (prop in companion.declarations.filterIsInstance<com.google.devtools.ksp.symbol.KSPropertyDeclaration>()) {
+                when {
+                    prop.findKspAnnotation<MultiCacheField>() != null -> {
+                        if (!customMultiCacheFieldName.isNullOrEmpty()) {
+                            manager.logError("MultiCacheField can only be declared once from: $elementName")
+                        } else {
+                            customMultiCacheFieldName = prop.simpleName.asString()
+                        }
+                    }
+                    prop.findKspAnnotation<ModelCacheField>() != null -> {
+                        if (!customCacheFieldName.isNullOrEmpty()) {
+                            manager.logError("ModelCacheField can only be declared once from: $elementName")
+                        } else {
+                            customCacheFieldName = prop.simpleName.asString()
+                        }
+                    }
+                }
+            }
+        }
+
+        // Scan methods for @OneToMany annotations
+        val oneToManyValidator = OneToManyValidator()
+        fun scanFunctionsForOneToMany(decl: KSClassDeclaration) {
+            for (fn in decl.declarations.filterIsInstance<com.google.devtools.ksp.symbol.KSFunctionDeclaration>()) {
+                if (fn.findKspAnnotation<OneToMany>() != null) {
+                    val def = OneToManyDefinition(KSP_SENTINEL_ELEMENT, manager)
+                    def.kspInit(fn, classElementLookUpMap)
+                    if (oneToManyValidator.validate(manager, def)) {
+                        oneToManyDefinitions.add(def)
+                    }
+                }
+            }
+        }
+        scanFunctionsForOneToMany(ksClass)
+        for (superTypeRef in ksClass.superTypes) {
+            val superDecl = superTypeRef.resolve().declaration as? KSClassDeclaration ?: continue
+            val qName = superDecl.qualifiedName?.asString() ?: continue
+            if (qName == "java.lang.Object" || qName == "kotlin.Any") continue
+            scanFunctionsForOneToMany(superDecl)
+        }
+
+        val columnValidator = ColumnValidator()
+        val properties = allProperties
+
+        for (property in properties) {
+            val hasColumn = property.findKspAnnotation<Column>() != null
+            val hasPrimaryKey = property.findKspAnnotation<PrimaryKey>() != null
+            val hasForeignKey = property.findKspAnnotation<ForeignKey>() != null
+            val isColumnMap = property.findKspAnnotation<ColumnMap>() != null
+
+            // allFields: include public non-static mutable fields that aren't ignored
+            // Exclude val/final fields to match KAPT behavior (KAPT skips Java `final` backing fields)
+            val isAllFieldsCandidate = allFields &&
+                    com.google.devtools.ksp.symbol.Modifier.PRIVATE !in property.modifiers &&
+                    com.google.devtools.ksp.symbol.Modifier.JAVA_STATIC !in property.modifiers &&
+                    property.isMutable
+
+            if (!hasColumn && !hasPrimaryKey && !hasForeignKey && !isColumnMap && !isAllFieldsCandidate) continue
+
+            if (isColumnMap) {
+                manager.logWarning("KSP: @ColumnMap on ${property.simpleName.asString()} in $tableName " +
+                        "is not yet fully supported – skipped.")
+                continue
+            }
+
+            val colDef: ColumnDefinition
+            if (hasForeignKey) {
+                val refDef = ReferenceColumnDefinition(manager, this, KSP_SENTINEL_ELEMENT, false)
+                refDef.kspInit(property)
+                colDef = refDef
+            } else {
+                colDef = ColumnDefinition(manager, KSP_SENTINEL_ELEMENT, this, false)
+                colDef.kspInit(property)
+            }
+
+            if (columnValidator.validate(manager, colDef)) {
+                columnDefinitions.add(colDef)
+                columnMap[colDef.columnName] = colDef
+                when {
+                    colDef.isPrimaryKey -> _primaryColumnDefinitions.add(colDef)
+                    colDef.isPrimaryKeyAutoIncrement -> {
+                        autoIncrementColumn = colDef
+                        hasAutoIncrement = true
+                    }
+                    colDef.isRowId -> {
+                        autoIncrementColumn = colDef
+                        hasRowID = true
+                    }
+                }
+                autoIncrementColumn?.let {
+                    if (it.isNullableType) {
+                        manager.logWarning("Nullable autoincrement column ${it.columnName} on $tableName")
+                    }
+                }
+                if (colDef is ReferenceColumnDefinition && !colDef.isColumnMap) {
+                    foreignKeyDefinitions.add(colDef)
+                }
+                if (!colDef.uniqueGroups.isEmpty()) {
+                    colDef.uniqueGroups.forEach { group ->
+                        columnUniqueMap.getOrPut(group) { mutableSetOf() }.add(colDef)
+                    }
                 }
             }
         }

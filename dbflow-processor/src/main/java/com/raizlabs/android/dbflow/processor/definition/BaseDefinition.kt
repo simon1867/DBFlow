@@ -74,11 +74,19 @@ abstract class BaseDefinition : TypeDefinition {
                 typeMirror = element.asType()
                 elementTypeName = typeMirror.typeName
             }
+            // KSP sentinel returns TypeKind.NONE which TypeName.get() cannot handle – fall back
+            if (elementTypeName == null) elementTypeName = com.squareup.javapoet.TypeName.OBJECT
             val erasedType = processorManager.typeUtils.erasure(typeMirror)
             erasedTypeName = TypeName.get(erasedType)
         } catch (i: IllegalArgumentException) {
-            manager.logError("Found illegal type: ${element.asType()} for ${element.simpleName}")
+            elementTypeName = com.squareup.javapoet.TypeName.OBJECT
+            manager.logError("Found illegal type: ${element.simpleName}")
             manager.logError("Exception here: $i")
+        } catch (e: UnsupportedOperationException) {
+            // KSP sentinel – type info will be supplied via kspInit()
+            elementTypeName = com.squareup.javapoet.TypeName.OBJECT
+        } catch (e: Exception) {
+            elementTypeName = com.squareup.javapoet.TypeName.OBJECT
         }
 
         elementName = element.simpleName.toString()

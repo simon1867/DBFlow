@@ -14,17 +14,30 @@ import com.grosner.kpoet.param
 import com.grosner.kpoet.parameterized
 import com.grosner.kpoet.public
 import com.grosner.kpoet.statement
+import com.google.devtools.ksp.symbol.KSClassDeclaration
+import com.google.devtools.ksp.symbol.KSDeclaration
+import com.google.devtools.ksp.symbol.KSFunctionDeclaration
+import com.google.devtools.ksp.symbol.KSPropertyDeclaration
 import com.raizlabs.android.dbflow.annotation.provider.ContentProvider
 import com.raizlabs.android.dbflow.annotation.provider.ContentUri
 import com.raizlabs.android.dbflow.annotation.provider.Notify
 import com.raizlabs.android.dbflow.annotation.provider.TableEndpoint
 import com.raizlabs.android.dbflow.processor.ClassNames
+import com.raizlabs.android.dbflow.processor.KSP_SENTINEL_ELEMENT
 import com.raizlabs.android.dbflow.processor.ProcessorManager
 import com.raizlabs.android.dbflow.processor.TableEndpointValidator
 import com.raizlabs.android.dbflow.processor.utils.`override fun`
 import com.raizlabs.android.dbflow.processor.utils.annotation
 import com.raizlabs.android.dbflow.processor.utils.controlFlow
+import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
+import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
+import com.raizlabs.android.dbflow.processor.utils.getArrayArgument
+import com.raizlabs.android.dbflow.processor.utils.getIntArgument
+import com.raizlabs.android.dbflow.processor.utils.getKsTypeArgument
+import com.raizlabs.android.dbflow.processor.utils.getStringArgument
 import com.raizlabs.android.dbflow.processor.utils.isNullOrEmpty
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetClassName
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetTypeName
 import com.squareup.javapoet.ArrayTypeName
 import com.squareup.javapoet.ClassName
 import com.squareup.javapoet.CodeBlock
@@ -473,6 +486,28 @@ class ContentProviderDefinition(typeElement: Element, processorManager: Processo
             .forEach { typeBuilder.addMethod(it) }
     }
 
+    fun kspInit(ksClass: KSClassDeclaration) {
+        elementName = ksClass.simpleName.asString()
+        packageName = ksClass.packageName.asString()
+        elementClassName = ksClass.toJavaPoetClassName()
+        elementTypeName = elementClassName
+
+        val cpAnnot = ksClass.findKspAnnotation<ContentProvider>() ?: return
+        authority = cpAnnot.getStringArgument("authority") ?: ""
+        databaseTypeName = cpAnnot.getKsTypeArgument("database")?.toJavaPoetTypeName()
+
+        val validator = TableEndpointValidator()
+        for (decl in ksClass.declarations.filterIsInstance<KSClassDeclaration>()) {
+            if (decl.findKspAnnotation<TableEndpoint>() != null) {
+                val endpointDef = TableEndpointDefinition(KSP_SENTINEL_ELEMENT, manager)
+                endpointDef.kspInit(decl)
+                if (validator.validate(manager, endpointDef)) {
+                    endpointDefinitions.add(endpointDef)
+                }
+            }
+        }
+    }
+
     companion object {
 
         internal val DEFINITION_NAME = "Provider"
@@ -528,5 +563,48 @@ class ContentUriDefinition(typeElement: Element, processorManager: ProcessorMana
 
     override fun getElementClassName(element: Element?): ClassName? {
         return null
+    }
+
+    companion object {
+        fun fromKsp(decl: KSDeclaration, processorManager: ProcessorManager): ContentUriDefinition {
+            val def = ContentUriDefinition(KSP_SENTINEL_ELEMENT, processorManager)
+
+            val enclosingName = decl.parentDeclaration?.simpleName?.asString() ?: ""
+            def.name = "${enclosingName}_${decl.simpleName.asString()}"
+
+            val annot = decl.findKspAnnotation<ContentUri>()
+            if (annot != null) {
+                def.path = annot.getStringArgument("path") ?: ""
+                def.type = annot.getStringArgument("type") ?: ""
+                def.queryEnabled = annot.getBooleanArgument("queryEnabled") ?: true
+                def.insertEnabled = annot.getBooleanArgument("insertEnabled") ?: true
+                def.deleteEnabled = annot.getBooleanArgument("deleteEnabled") ?: true
+                def.updateEnabled = annot.getBooleanArgument("updateEnabled") ?: true
+
+                val segAnnotations = annot.getArrayArgument<com.google.devtools.ksp.symbol.KSAnnotation>("segments") ?: emptyList()
+                def.segments = segAnnotations.mapNotNull { segAnnot ->
+                    val col = segAnnot.getStringArgument("column") ?: return@mapNotNull null
+                    val seg = segAnnot.getIntArgument("segment") ?: return@mapNotNull null
+                    createPathSegment(col, seg)
+                }.toTypedArray()
+            }
+            return def
+        }
+
+        private fun createPathSegment(column: String, segment: Int): ContentUri.PathSegment =
+            java.lang.reflect.Proxy.newProxyInstance(
+                ContentUri.PathSegment::class.java.classLoader,
+                arrayOf(ContentUri.PathSegment::class.java)
+            ) { _, method, _ ->
+                when (method.name) {
+                    "column" -> column
+                    "segment" -> segment
+                    "annotationType" -> ContentUri.PathSegment::class.java
+                    "hashCode" -> 31 * column.hashCode() + segment
+                    "equals" -> false
+                    "toString" -> "@PathSegment(column=\"$column\", segment=$segment)"
+                    else -> null
+                }
+            } as ContentUri.PathSegment
     }
 }
