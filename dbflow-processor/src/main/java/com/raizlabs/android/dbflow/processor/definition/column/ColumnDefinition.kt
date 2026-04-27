@@ -20,6 +20,7 @@ import com.raizlabs.android.dbflow.processor.definition.BaseTableDefinition
 import com.raizlabs.android.dbflow.processor.definition.TableDefinition
 import com.raizlabs.android.dbflow.processor.definition.TypeConverterDefinition
 import com.raizlabs.android.dbflow.processor.utils.annotation
+import com.raizlabs.android.dbflow.processor.utils.findAnnotationByName
 import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
 import com.raizlabs.android.dbflow.processor.utils.fromTypeMirror
 import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
@@ -361,9 +362,7 @@ constructor(processorManager: ProcessorManager, element: Element,
         // - Kotlin properties: need @JvmField for direct access; otherwise use getter/setter.
         val isPrivate = com.google.devtools.ksp.symbol.Modifier.PRIVATE in property.modifiers
         val isKotlinOrigin = property.origin == Origin.KOTLIN || property.origin == Origin.KOTLIN_LIB
-        val hasJvmField = property.annotations.any {
-            it.annotationType.resolve().declaration.qualifiedName?.asString() == "kotlin.jvm.JvmField"
-        }
+        val hasJvmField = property.findAnnotationByName("kotlin.jvm.JvmField") != null
         val useDirectAccess = if (!isKotlinOrigin) !isPrivate else (!isPrivate && hasJvmField)
         if (!useDirectAccess) {
             val isBoolean = elementTypeName?.box() == TypeName.BOOLEAN.box()

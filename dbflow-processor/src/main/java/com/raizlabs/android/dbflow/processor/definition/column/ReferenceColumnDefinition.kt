@@ -18,6 +18,7 @@ import com.raizlabs.android.dbflow.processor.definition.TableDefinition
 import com.google.devtools.ksp.getAllSuperTypes
 import com.google.devtools.ksp.symbol.Origin
 import com.raizlabs.android.dbflow.processor.utils.annotation
+import com.raizlabs.android.dbflow.processor.utils.findAnnotationByName
 import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
 import com.raizlabs.android.dbflow.processor.utils.fromTypeMirror
 import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
@@ -458,9 +459,7 @@ class ReferenceColumnDefinition(manager: ProcessorManager, tableDefinition: Base
         // Accessor for the FK field itself (e.g. model.author)
         val isPrivate = com.google.devtools.ksp.symbol.Modifier.PRIVATE in property.modifiers
         val isKotlinOrigin = property.origin == Origin.KOTLIN || property.origin == Origin.KOTLIN_LIB
-        val hasJvmField = property.annotations.any {
-            it.annotationType.resolve().declaration.qualifiedName?.asString() == "kotlin.jvm.JvmField"
-        }
+        val hasJvmField = property.findAnnotationByName("kotlin.jvm.JvmField") != null
         val useDirectAccess = if (!isKotlinOrigin) !isPrivate else (!isPrivate && hasJvmField)
         columnAccessor = if (!useDirectAccess) {
             PrivateScopeColumnAccessor(elementName, object : GetterSetter {

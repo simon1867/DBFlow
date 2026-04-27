@@ -95,7 +95,8 @@ fun KSType.toJavaPoetTypeName(): TypeName {
 
 fun KSAnnotated.findAnnotationByName(qualifiedName: String): KSAnnotation? =
     annotations.find {
-        it.annotationType.resolve().declaration.qualifiedName?.asString() == qualifiedName
+        val resolved = it.annotationType.resolve()
+        !resolved.isError && resolved.declaration.qualifiedName?.asString() == qualifiedName
     }
 
 inline fun <reified T : Annotation> KSAnnotated.findKspAnnotation(): KSAnnotation? =

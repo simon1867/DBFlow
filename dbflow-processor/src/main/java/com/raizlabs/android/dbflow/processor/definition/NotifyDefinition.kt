@@ -113,10 +113,11 @@ class NotifyDefinition(typeElement: Element, processorManager: ProcessorManager)
                 if (!first) paramsBuilder.append(", ")
                 first = false
                 val resolvedType = param.type.resolve()
+                if (resolvedType.isError) continue
                 val isArray = resolvedType.declaration.qualifiedName?.asString() == "kotlin.Array"
                 val elementQName = if (isArray) {
-                    resolvedType.arguments.firstOrNull()?.type?.resolve()
-                        ?.declaration?.qualifiedName?.asString() ?: ""
+                    val inner = resolvedType.arguments.firstOrNull()?.type?.resolve()
+                    if (inner != null && !inner.isError) inner.declaration.qualifiedName?.asString() ?: "" else ""
                 } else {
                     resolvedType.declaration.qualifiedName?.asString() ?: ""
                 }
@@ -133,7 +134,7 @@ class NotifyDefinition(typeElement: Element, processorManager: ProcessorManager)
 
             // Determine return type: Uri[] or Uri
             val returnType = fn.returnType?.resolve()
-            val returnDecl = returnType?.declaration?.qualifiedName?.asString() ?: ""
+            val returnDecl = if (returnType != null && !returnType.isError) returnType.declaration.qualifiedName?.asString() ?: "" else ""
             when {
                 returnDecl == "kotlin.Array" -> def.returnsArray = true
                 returnDecl == "android.net.Uri" -> def.returnsSingle = true
