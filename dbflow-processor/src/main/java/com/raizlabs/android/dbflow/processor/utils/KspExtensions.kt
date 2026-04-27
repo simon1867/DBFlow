@@ -7,6 +7,7 @@ import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSDeclaration
 import com.google.devtools.ksp.symbol.KSType
 import com.google.devtools.ksp.symbol.KSTypeParameter
+import com.google.devtools.ksp.symbol.Nullability
 import com.google.devtools.ksp.symbol.Variance
 import com.squareup.javapoet.ArrayTypeName
 import com.squareup.javapoet.ClassName
@@ -67,7 +68,9 @@ fun KSType.toJavaPoetTypeName(): TypeName {
             val qualifiedName = declaration.qualifiedName?.asString()
             // Map Kotlin primitives to Java primitives/wrappers
             KOTLIN_PRIMITIVE_MAP[qualifiedName]?.let { primitive ->
-                return if (isMarkedNullable) primitive.box() else primitive
+                // PLATFORM nullability means a Java type without a nullability annotation — treat
+                // as boxed (nullable) to avoid NPE on auto-unboxing in generated bind* calls.
+                return if (isMarkedNullable || nullability == Nullability.PLATFORM) primitive.box() else primitive
             }
             KOTLIN_ARRAY_TYPE_MAP[qualifiedName]?.let { arrayType -> return arrayType }
             KOTLIN_CLASS_MAP[qualifiedName]?.let { classType -> return classType }

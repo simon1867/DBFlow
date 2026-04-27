@@ -2,6 +2,7 @@ package com.raizlabs.android.dbflow.processor.definition.column
 
 import com.grosner.kpoet.code
 import com.google.devtools.ksp.symbol.KSPropertyDeclaration
+import com.google.devtools.ksp.symbol.Nullability
 import com.google.devtools.ksp.symbol.Origin
 import com.raizlabs.android.dbflow.annotation.Collate
 import com.raizlabs.android.dbflow.annotation.Column
@@ -325,8 +326,9 @@ constructor(processorManager: ProcessorManager, element: Element,
         elementClassName = (ksType.declaration as? com.google.devtools.ksp.symbol.KSClassDeclaration)?.toJavaPoetClassName()
         packageName = property.parentDeclaration?.packageName?.asString() ?: ""
 
-        isNullableType = ksType.isMarkedNullable
-        isNotNullType = !ksType.isMarkedNullable || elementTypeName?.isPrimitive == true
+        // PLATFORM = unannotated Java type: treat as nullable (same as KAPT did for unannotated Java).
+        isNullableType = ksType.isMarkedNullable || ksType.nullability == Nullability.PLATFORM
+        isNotNullType = ksType.nullability == Nullability.NOT_NULL || elementTypeName?.isPrimitive == true
 
         // @NotNull
         property.findKspAnnotation<NotNull>()?.let { notNullAnnot ->
