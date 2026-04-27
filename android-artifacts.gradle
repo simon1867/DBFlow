@@ -1,4 +1,1 @@
-task sourcesJar(type: Jar) {
-    from android.sourceSets.main.java.srcDirs
-    archiveClassifier.set('sources')
-}
+// sourcesJar is registered automatically by AGP 8.x for Android library modules
