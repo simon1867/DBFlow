@@ -78,7 +78,7 @@ class DatabaseDefinition(manager: ProcessorManager, element: Element) : BaseDefi
             classSeparator = database.generatedClassSeparator
             fieldRefSeparator = classSeparator
 
-            setOutputClassName(databaseClassName + classSeparator + "Database")
+            setOutputClassName(classSeparator + "Database")
 
             databaseVersion = database.version
             foreignKeysSupported = database.foreignKeyConstraintsEnforced
