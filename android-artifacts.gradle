@@ -1,1 +1,22 @@
-// sourcesJar is registered automatically by AGP 8.x for Android library modules
+apply plugin: 'maven-publish'
+
+android {
+    publishing {
+        singleVariant('release') {
+            withSourcesJar()
+        }
+    }
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+                groupId = project.group
+                artifactId = project.name
+                version = rootProject.version
+            }
+        }
+    }
+}
