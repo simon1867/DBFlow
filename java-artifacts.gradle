@@ -1,1 +1,16 @@
-// Publishing configured separately if needed
+apply plugin: 'maven-publish'
+
+java {
+    withSourcesJar()
+}
+
+publishing {
+    publications {
+        release(MavenPublication) {
+            from components.java
+            groupId = project.group
+            artifactId = project.name
+            version = rootProject.version
+        }
+    }
+}
