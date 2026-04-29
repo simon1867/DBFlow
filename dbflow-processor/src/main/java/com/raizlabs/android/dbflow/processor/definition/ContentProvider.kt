@@ -491,6 +491,7 @@ class ContentProviderDefinition(typeElement: Element, processorManager: Processo
         packageName = ksClass.packageName.asString()
         elementClassName = ksClass.toJavaPoetClassName()
         elementTypeName = elementClassName
+        originatingFile = ksClass.containingFile
 
         val cpAnnot = ksClass.findKspAnnotation<ContentProvider>() ?: return
         authority = cpAnnot.getStringArgument("authority") ?: ""

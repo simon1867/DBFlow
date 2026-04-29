@@ -285,6 +285,21 @@ constructor(processorManager: ProcessorManager, element: Element,
                 subWrapperAccessor)
     }
 
+    /**
+     * Reads an `int[]` annotation argument (e.g. `uniqueGroups`, `indexGroups`). Java permits
+     * writing a single-element array as a bare scalar (`uniqueGroups = 1`), and KSP exposes that
+     * form as a single Int rather than a List, so we have to handle both shapes.
+     */
+    private fun readIntArrayArgument(annot: com.google.devtools.ksp.symbol.KSAnnotation, name: String): List<Int> {
+        val raw = annot.arguments.find { it.name?.asString() == name }?.value ?: return emptyList()
+        return when (raw) {
+            is List<*>  -> raw.filterIsInstance<Int>()
+            is IntArray -> raw.toList()
+            is Int      -> listOf(raw)
+            else        -> emptyList()
+        }
+    }
+
     private fun evaluateTypeConverter(typeConverterDefinition: TypeConverterDefinition?,
                                       isCustom: Boolean) {
         // Any annotated members, otherwise we will use the scanner to find other ones
@@ -399,19 +414,16 @@ constructor(processorManager: ProcessorManager, element: Element,
             unique = uniqueAnnot.getBooleanArgument("unique") ?: true
             val conflictName = uniqueAnnot.getEnumArgument("onUniqueConflict") ?: "NONE"
             onUniqueConflict = runCatching { ConflictAction.valueOf(conflictName) }.getOrDefault(ConflictAction.NONE)
-            @Suppress("UNCHECKED_CAST")
-            (uniqueAnnot.arguments.find { it.name?.asString() == "uniqueGroups" }?.value as? List<Int>)
-                ?.forEach { uniqueGroups.add(it) }
+            uniqueGroups.addAll(readIntArrayArgument(uniqueAnnot, "uniqueGroups"))
         }
 
         // @Index
         property.findKspAnnotation<Index>()?.let { indexAnnot ->
-            @Suppress("UNCHECKED_CAST")
-            val groups = indexAnnot.arguments.find { it.name?.asString() == "indexGroups" }?.value as? List<Int>
-            if (groups.isNullOrEmpty()) {
+            val groups = readIntArrayArgument(indexAnnot, "indexGroups")
+            if (groups.isEmpty()) {
                 indexGroups.add(IndexGroup.GENERIC)
             } else {
-                groups.forEach { indexGroups.add(it) }
+                indexGroups.addAll(groups)
             }
         }
 

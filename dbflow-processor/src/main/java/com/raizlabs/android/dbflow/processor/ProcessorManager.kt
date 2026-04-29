@@ -64,11 +64,29 @@ open class ProcessorManager internal constructor(val processingEnvironment: Proc
         catch (e: FilerException) { /* already written */ }
     }
 
+    /**
+     * KSP-aware overload. When [originatingFile] is non-null, the KSP subclass uses it to declare
+     * an isolating [com.google.devtools.ksp.processing.Dependencies], letting KSP skip
+     * regenerating outputs whose source class hasn't changed. The KAPT path ignores it.
+     */
+    open fun writeJavaFile(
+        packageName: String,
+        typeSpec: com.squareup.javapoet.TypeSpec,
+        originatingFile: com.google.devtools.ksp.symbol.KSFile?
+    ) {
+        // Default falls through to the aggregating overload — the KSP subclass overrides this.
+        writeJavaFile(packageName, typeSpec)
+    }
+
     open val messager: Messager = processingEnvironment?.messager ?: SilentMessager
 
     open val typeUtils: Types = processingEnvironment?.typeUtils ?: NoOpTypes()
 
     open val elements: Elements = processingEnvironment?.elementUtils ?: NoOpElements()
+
+    /** Processor-pipeline options. KAPT reads them from the [processingEnvironment]; KSP supplies
+     *  them via the [SymbolProcessorEnvironment.options] map and overrides this. */
+    open val options: Map<String, String> = processingEnvironment?.options.orEmpty()
 
     private object SilentMessager : Messager {
         override fun printMessage(kind: Diagnostic.Kind?, msg: CharSequence?) {}

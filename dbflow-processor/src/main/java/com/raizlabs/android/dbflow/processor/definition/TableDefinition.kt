@@ -46,6 +46,7 @@ import com.raizlabs.android.dbflow.processor.utils.ensureVisibleStatic
 import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
 import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
 import com.raizlabs.android.dbflow.processor.utils.getEnumArgument
+import com.raizlabs.android.dbflow.processor.utils.getIntArgument
 import com.raizlabs.android.dbflow.processor.utils.getKsTypeArgument
 import com.raizlabs.android.dbflow.processor.utils.getStringArgument
 import com.raizlabs.android.dbflow.processor.utils.implementsClass
@@ -113,6 +114,13 @@ class TableDefinition(manager: ProcessorManager, element: javax.lang.model.eleme
     /** Set to true when this definition is populated via [kspInit] rather than from a TypeElement. */
     internal var kspMode = false
     internal var ksClassDeclaration: KSClassDeclaration? = null
+
+    /**
+     * KSP2 invalidates [com.google.devtools.ksp.symbol.KSDeclaration]s captured in earlier rounds,
+     * so [prepareForWrite] (which re-touches the round-1 declaration) must run only once per
+     * definition. Round-2-discovered tables get prepared the first time they hit this method.
+     */
+    private var preparedKspWrite = false
 
     var inheritedColumnMap = hashMapOf<String, InheritedColumn>()
     var inheritedFieldNameList = mutableListOf<String>()
@@ -319,6 +327,7 @@ class TableDefinition(manager: ProcessorManager, element: javax.lang.model.eleme
     fun kspInit(ksClass: KSClassDeclaration) {
         kspMode = true
         ksClassDeclaration = ksClass
+        originatingFile = ksClass.containingFile
 
         elementName = ksClass.simpleName.asString()
         elementClassName = ksClass.toJavaPoetClassName()
@@ -350,6 +359,8 @@ class TableDefinition(manager: ProcessorManager, element: javax.lang.model.eleme
     }
 
     override fun prepareForWrite() {
+        if (kspMode && preparedKspWrite) return
+
         columnDefinitions = ArrayList()
         columnMap.clear()
         classElementLookUpMap.clear()
@@ -364,6 +375,7 @@ class TableDefinition(manager: ProcessorManager, element: javax.lang.model.eleme
 
         if (kspMode) {
             prepareForWriteKsp()
+            preparedKspWrite = true
             return
         }
 
@@ -465,6 +477,33 @@ class TableDefinition(manager: ProcessorManager, element: javax.lang.model.eleme
         }
 
         createColumnDefinitionsFromKsp(ksClass)
+
+        // Process @Table(uniqueColumnGroups = {...}). KSP exposes the annotation arguments as
+        // raw lists of nested KSAnnotation instances rather than reflective annotation objects,
+        // so we read groupNumber + uniqueConflict directly off each.
+        val tableAnnot = ksClass.findKspAnnotation<Table>()
+        val rawUniqueGroups = tableAnnot
+            ?.arguments
+            ?.find { it.name?.asString() == "uniqueColumnGroups" }
+            ?.value
+        @Suppress("UNCHECKED_CAST")
+        val uniqueGroupAnnots = (rawUniqueGroups as? List<*>)
+            ?.filterIsInstance<com.google.devtools.ksp.symbol.KSAnnotation>()
+        val seenGroupNumbers = mutableSetOf<Int>()
+        uniqueGroupAnnots?.forEach { groupAnnot ->
+            val groupNumber = groupAnnot.getIntArgument("groupNumber") ?: return@forEach
+            if (!seenGroupNumbers.add(groupNumber)) {
+                manager.logError("A duplicate unique group with number $groupNumber was found for $tableName")
+                return@forEach
+            }
+            val conflictName = groupAnnot.getEnumArgument("uniqueConflict") ?: "NONE"
+            val conflict = runCatching { ConflictAction.valueOf(conflictName) }.getOrDefault(ConflictAction.NONE)
+            val definition = UniqueGroupsDefinition(groupNumber, conflict)
+            columnDefinitions
+                .filter { it.uniqueGroups.contains(groupNumber) }
+                .forEach { definition.addColumnDefinition(it) }
+            uniqueGroupsDefinitions.add(definition)
+        }
     }
 
     // KSP's getAllProperties() skips private members from superclasses; we need them too (e.g.

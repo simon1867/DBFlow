@@ -10,8 +10,12 @@ import java.io.IOException
 object WriterUtils {
 
     fun writeBaseDefinition(baseDefinition: BaseDefinition, processorManager: ProcessorManager): Boolean {
+        if (baseDefinition.fileWritten) return true
         return try {
-            processorManager.writeJavaFile(baseDefinition.packageName, baseDefinition.typeSpec)
+            // Per-class definitions pass their originating KSFile so KSP can mark the output
+            // isolating; the KAPT path ignores the extra parameter.
+            processorManager.writeJavaFile(baseDefinition.packageName, baseDefinition.typeSpec, baseDefinition.originatingFile)
+            baseDefinition.fileWritten = true
             true
         } catch (e: IOException) {
             false

@@ -229,15 +229,12 @@ class OneToManyDefinition(element: Element,
             !classElementLookUpMap.containsKey(_variableName)
         }
 
-        val methodStrings = annot.getArrayArgument<com.google.devtools.ksp.symbol.KSAnnotation>("methods")
-        if (methodStrings != null) {
-            // methods is an array of enum values — use getEnumArgument-style extraction
-        }
-        // Read methods as enum names from the annotation arguments
+        // Read methods as enum names from the annotation arguments. KSP1 delivers each entry as a
+        // KSType; KSP2 delivers a KSClassDeclaration for the enum entry directly. Handle all three.
         val methodsArg = annot.arguments.find { it.name?.asString() == "methods" }?.value
-        @Suppress("UNCHECKED_CAST")
         val methodList = (methodsArg as? List<*>)?.mapNotNull { item ->
             val name = when (item) {
+                is com.google.devtools.ksp.symbol.KSClassDeclaration -> item.simpleName.asString()
                 is com.google.devtools.ksp.symbol.KSType -> item.declaration.simpleName.asString()
                 is String -> item
                 else -> null

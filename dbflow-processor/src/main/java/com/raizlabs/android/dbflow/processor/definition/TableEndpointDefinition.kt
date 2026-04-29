@@ -93,6 +93,7 @@ class TableEndpointDefinition(typeElement: Element, processorManager: ProcessorM
         packageName = ksClass.packageName.asString()
         elementClassName = ksClass.toJavaPoetClassName()
         elementTypeName = elementClassName
+        originatingFile = ksClass.containingFile
 
         val endpointAnnot = ksClass.findKspAnnotation<TableEndpoint>() ?: return
         tableName = endpointAnnot.getStringArgument("name") ?: ""

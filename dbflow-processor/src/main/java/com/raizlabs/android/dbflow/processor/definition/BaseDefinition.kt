@@ -34,6 +34,17 @@ abstract class BaseDefinition : TypeDefinition {
     var outputClassName: ClassName? = null
     var erasedTypeName: TypeName? = null
 
+    /** Set to true once this definition's file has been emitted, so a second write attempt is a no-op. */
+    internal var fileWritten = false
+
+    /**
+     * KSP source file that this definition was generated from. Used to declare per-class outputs
+     * as isolating ([com.google.devtools.ksp.processing.Dependencies] with `aggregating=false`),
+     * so KSP can skip regenerating files whose source hasn't changed. Null for KAPT path or for
+     * aggregating outputs (e.g. the database holder).
+     */
+    internal var originatingFile: com.google.devtools.ksp.symbol.KSFile? = null
+
     var element: Element
     var typeElement: TypeElement? = null
     var elementName: String

@@ -47,6 +47,8 @@ class QueryModelDefinition(typeElement: Element, processorManager: ProcessorMana
     internal var kspMode = false
     internal var ksClassDeclaration: KSClassDeclaration? = null
 
+    private var preparedKspWrite = false
+
     init {
 
         typeElement.annotation<QueryModel>()?.let { queryModel ->
@@ -72,6 +74,7 @@ class QueryModelDefinition(typeElement: Element, processorManager: ProcessorMana
     fun kspInit(ksClass: KSClassDeclaration) {
         kspMode = true
         ksClassDeclaration = ksClass
+        originatingFile = ksClass.containingFile
 
         elementName = ksClass.simpleName.asString()
         elementClassName = ksClass.toJavaPoetClassName()
@@ -94,12 +97,15 @@ class QueryModelDefinition(typeElement: Element, processorManager: ProcessorMana
     }
 
     override fun prepareForWrite() {
+        if (kspMode && preparedKspWrite) return
+
         classElementLookUpMap.clear()
         columnDefinitions.clear()
         packagePrivateList.clear()
 
         if (kspMode) {
             prepareForWriteKsp()
+            preparedKspWrite = true
             return
         }
 

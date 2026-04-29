@@ -123,10 +123,15 @@ fun <T : Any> KSAnnotation.getArrayArgument(name: String): List<T>? =
 
 fun KSClassDeclaration.isEnum(): Boolean = classKind == ClassKind.ENUM_CLASS
 
-/** Returns the simple name string for an enum annotation argument (handles KSType and String representations). */
+/** Returns the simple name string for an enum annotation argument.
+ *
+ * KSP1 typically delivers the value as a [KSType] (the enum entry's type) or a [String];
+ * KSP2 delivers a [KSClassDeclaration] for the enum entry directly. Handle all three.
+ */
 fun KSAnnotation.getEnumArgument(name: String): String? {
     val value = arguments.find { it.name?.asString() == name }?.value
     return when (value) {
+        is KSClassDeclaration -> value.simpleName.asString()
         is KSType -> value.declaration.simpleName.asString()
         is String -> value
         else -> null

@@ -61,6 +61,8 @@ class ModelViewDefinition(manager: ProcessorManager, element: Element) : BaseTab
     internal var kspMode = false
     internal var ksClassDeclaration: KSClassDeclaration? = null
 
+    private var preparedKspWrite = false
+
     init {
 
         element.annotation<ModelView>()?.let { modelView ->
@@ -90,6 +92,7 @@ class ModelViewDefinition(manager: ProcessorManager, element: Element) : BaseTab
     fun kspInit(ksClass: KSClassDeclaration) {
         kspMode = true
         ksClassDeclaration = ksClass
+        originatingFile = ksClass.containingFile
 
         elementName = ksClass.simpleName.asString()
         elementClassName = ksClass.toJavaPoetClassName()
@@ -110,12 +113,15 @@ class ModelViewDefinition(manager: ProcessorManager, element: Element) : BaseTab
     }
 
     override fun prepareForWrite() {
+        if (kspMode && preparedKspWrite) return
+
         classElementLookUpMap.clear()
         columnDefinitions.clear()
         queryFieldName = null
 
         if (kspMode) {
             prepareForWriteKsp()
+            preparedKspWrite = true
             return
         }
 

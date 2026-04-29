@@ -80,6 +80,7 @@ class ManyToManyDefinition(element: Element, processorManager: ProcessorManager,
         packageName = ksClass.packageName.asString()
         elementClassName = ksClass.toJavaPoetClassName()
         elementTypeName = elementClassName
+        originatingFile = ksClass.containingFile
 
         val annot = ksClass.findKspAnnotation<ManyToMany>() ?: return
 
