@@ -34,6 +34,17 @@ abstract class BaseDefinition : TypeDefinition {
     var outputClassName: ClassName? = null
     var erasedTypeName: TypeName? = null
 
+    /** Set to true once this definition's file has been emitted, so a second write attempt is a no-op. */
+    internal var fileWritten = false
+
+    /**
+     * KSP source file that this definition was generated from. Used to declare per-class outputs
+     * as isolating ([com.google.devtools.ksp.processing.Dependencies] with `aggregating=false`),
+     * so KSP can skip regenerating files whose source hasn't changed. Null for KAPT path or for
+     * aggregating outputs (e.g. the database holder).
+     */
+    internal var originatingFile: com.google.devtools.ksp.symbol.KSFile? = null
+
     var element: Element
     var typeElement: TypeElement? = null
     var elementName: String
@@ -74,11 +85,19 @@ abstract class BaseDefinition : TypeDefinition {
                 typeMirror = element.asType()
                 elementTypeName = typeMirror.typeName
             }
+            // KSP sentinel returns TypeKind.NONE which TypeName.get() cannot handle – fall back
+            if (elementTypeName == null) elementTypeName = com.squareup.javapoet.TypeName.OBJECT
             val erasedType = processorManager.typeUtils.erasure(typeMirror)
             erasedTypeName = TypeName.get(erasedType)
         } catch (i: IllegalArgumentException) {
-            manager.logError("Found illegal type: ${element.asType()} for ${element.simpleName}")
+            elementTypeName = com.squareup.javapoet.TypeName.OBJECT
+            manager.logError("Found illegal type: ${element.simpleName}")
             manager.logError("Exception here: $i")
+        } catch (e: UnsupportedOperationException) {
+            // KSP sentinel – type info will be supplied via kspInit()
+            elementTypeName = com.squareup.javapoet.TypeName.OBJECT
+        } catch (e: Exception) {
+            elementTypeName = com.squareup.javapoet.TypeName.OBJECT
         }
 
         elementName = element.simpleName.toString()

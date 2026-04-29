@@ -7,12 +7,15 @@ import com.grosner.kpoet.`return`
 import com.grosner.kpoet.final
 import com.grosner.kpoet.modifiers
 import com.grosner.kpoet.public
+import com.google.devtools.ksp.getAllSuperTypes
+import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.raizlabs.android.dbflow.annotation.Column
 import com.raizlabs.android.dbflow.annotation.ColumnMap
 import com.raizlabs.android.dbflow.annotation.ModelView
 import com.raizlabs.android.dbflow.annotation.ModelViewQuery
 import com.raizlabs.android.dbflow.processor.ClassNames
 import com.raizlabs.android.dbflow.processor.ColumnValidator
+import com.raizlabs.android.dbflow.processor.KSP_SENTINEL_ELEMENT
 import com.raizlabs.android.dbflow.processor.ProcessorManager
 import com.raizlabs.android.dbflow.processor.definition.column.ColumnDefinition
 import com.raizlabs.android.dbflow.processor.definition.column.ReferenceColumnDefinition
@@ -20,9 +23,15 @@ import com.raizlabs.android.dbflow.processor.utils.ElementUtility
 import com.raizlabs.android.dbflow.processor.utils.`override fun`
 import com.raizlabs.android.dbflow.processor.utils.annotation
 import com.raizlabs.android.dbflow.processor.utils.ensureVisibleStatic
+import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
+import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
+import com.raizlabs.android.dbflow.processor.utils.getKsTypeArgument
+import com.raizlabs.android.dbflow.processor.utils.getStringArgument
 import com.raizlabs.android.dbflow.processor.utils.implementsClass
 import com.raizlabs.android.dbflow.processor.utils.isNullOrEmpty
 import com.raizlabs.android.dbflow.processor.utils.simpleString
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetClassName
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetTypeName
 import com.raizlabs.android.dbflow.processor.utils.toTypeErasedElement
 import com.squareup.javapoet.ParameterizedTypeName
 import com.squareup.javapoet.TypeName
@@ -36,7 +45,7 @@ import javax.lang.model.type.MirroredTypeException
  */
 class ModelViewDefinition(manager: ProcessorManager, element: Element) : BaseTableDefinition(element, manager) {
 
-    internal val implementsLoadFromCursorListener: Boolean
+    internal var implementsLoadFromCursorListener: Boolean = false
 
     private var queryFieldName: String? = null
 
@@ -48,6 +57,11 @@ class ModelViewDefinition(manager: ProcessorManager, element: Element) : BaseTab
     var allFields: Boolean = false
 
     var priority: Int = 0
+
+    internal var kspMode = false
+    internal var ksClassDeclaration: KSClassDeclaration? = null
+
+    private var preparedKspWrite = false
 
     init {
 
@@ -67,19 +81,49 @@ class ModelViewDefinition(manager: ProcessorManager, element: Element) : BaseTab
             this.priority = modelView.priority
         }
 
-        if (element is TypeElement) {
-            implementsLoadFromCursorListener = element.implementsClass(manager.processingEnvironment,
-                ClassNames.LOAD_FROM_CURSOR_LISTENER)
+        implementsLoadFromCursorListener = if (element is TypeElement) {
+            element.implementsClass(manager.processingEnvironment, ClassNames.LOAD_FROM_CURSOR_LISTENER)
         } else {
-            implementsLoadFromCursorListener = false
+            false
         }
 
     }
 
+    fun kspInit(ksClass: KSClassDeclaration) {
+        kspMode = true
+        ksClassDeclaration = ksClass
+        originatingFile = ksClass.containingFile
+
+        elementName = ksClass.simpleName.asString()
+        elementClassName = ksClass.toJavaPoetClassName()
+        elementTypeName = elementClassName
+        packageName = ksClass.packageName.asString()
+
+        val annot = ksClass.findKspAnnotation<ModelView>() ?: return
+
+        val dbKsType = annot.getKsTypeArgument("database")
+        databaseTypeName = dbKsType?.toJavaPoetTypeName()
+
+        allFields = annot.getBooleanArgument("allFields") ?: false
+        name = annot.getStringArgument("name").takeIf { !it.isNullOrEmpty() } ?: elementName
+        priority = annot.arguments.find { it.name?.asString() == "priority" }?.value as? Int ?: 0
+
+        val superTypes = ksClass.getAllSuperTypes().map { it.declaration.qualifiedName?.asString() }
+        implementsLoadFromCursorListener = ClassNames.LOAD_FROM_CURSOR_LISTENER.toString() in superTypes
+    }
+
     override fun prepareForWrite() {
+        if (kspMode && preparedKspWrite) return
+
         classElementLookUpMap.clear()
         columnDefinitions.clear()
         queryFieldName = null
+
+        if (kspMode) {
+            prepareForWriteKsp()
+            preparedKspWrite = true
+            return
+        }
 
         val modelView = element.getAnnotation(ModelView::class.java)
         if (modelView != null) {
@@ -89,6 +133,92 @@ class ModelViewDefinition(manager: ProcessorManager, element: Element) : BaseTab
             typeElement?.let { createColumnDefinitions(it) }
         } else {
             setOutputClassName("ViewTable")
+        }
+    }
+
+    private fun prepareForWriteKsp() {
+        val ksClass = ksClassDeclaration ?: return
+        databaseDefinition = manager.getDatabaseHolderDefinition(databaseTypeName)?.databaseDefinition
+        if (databaseDefinition == null) {
+            manager.logError("DatabaseDefinition was null for KSP ModelView: $elementName")
+            return
+        }
+        setOutputClassName("${databaseDefinition?.classSeparator}ViewTable")
+        createColumnDefinitionsFromKsp(ksClass)
+    }
+
+    private fun createColumnDefinitionsFromKsp(ksClass: KSClassDeclaration) {
+        for (property in ksClass.getAllProperties()) {
+            val name = property.simpleName.asString()
+            classElementLookUpMap[name] = KSP_SENTINEL_ELEMENT
+            val cap = name.replaceFirstChar { it.uppercase() }
+            classElementLookUpMap["get$cap"] = KSP_SENTINEL_ELEMENT
+            classElementLookUpMap["set$cap"] = KSP_SENTINEL_ELEMENT
+            if (name.startsWith("is", ignoreCase = true)) {
+                val withoutIs = name.removePrefix("is").removePrefix("Is")
+                    .replaceFirstChar { it.uppercase() }
+                classElementLookUpMap["set$withoutIs"] = KSP_SENTINEL_ELEMENT
+            }
+        }
+        for (function in ksClass.declarations.filterIsInstance<com.google.devtools.ksp.symbol.KSFunctionDeclaration>()) {
+            classElementLookUpMap[function.simpleName.asString()] = KSP_SENTINEL_ELEMENT
+        }
+
+        val columnValidator = ColumnValidator()
+
+        // Check companion object for @ModelViewQuery (Kotlin companion object pattern)
+        val companion = ksClass.declarations
+            .filterIsInstance<KSClassDeclaration>()
+            .find { it.isCompanionObject }
+        companion?.declarations?.filterIsInstance<com.google.devtools.ksp.symbol.KSPropertyDeclaration>()
+            ?.find { it.findKspAnnotation<ModelViewQuery>() != null }
+            ?.let { queryProp ->
+                if (!queryFieldName.isNullOrEmpty()) {
+                    manager.logError("Found duplicate queryField name: $queryFieldName for $elementClassName")
+                }
+                queryFieldName = queryProp.simpleName.asString()
+            }
+
+        // Check direct declarations for Java static fields with @ModelViewQuery
+        if (queryFieldName.isNullOrEmpty()) {
+            ksClass.declarations.filterIsInstance<com.google.devtools.ksp.symbol.KSPropertyDeclaration>()
+                .find { it.findKspAnnotation<ModelViewQuery>() != null }
+                ?.let { queryProp ->
+                    queryFieldName = queryProp.simpleName.asString()
+                }
+        }
+
+        for (property in ksClass.getAllProperties()) {
+            val propName = property.simpleName.asString()
+
+            if (property.findKspAnnotation<ModelViewQuery>() != null) {
+                if (!queryFieldName.isNullOrEmpty()) {
+                    manager.logError("Found duplicate queryField name: $queryFieldName for $elementClassName")
+                }
+                queryFieldName = propName
+                continue
+            }
+
+            val hasColumn = property.findKspAnnotation<Column>() != null
+            val isAllFieldsCandidate = allFields &&
+                    com.google.devtools.ksp.symbol.Modifier.PRIVATE !in property.modifiers &&
+                    com.google.devtools.ksp.symbol.Modifier.JAVA_STATIC !in property.modifiers
+
+            if (!hasColumn && !isAllFieldsCandidate) continue
+
+            val colDef = ColumnDefinition(manager, KSP_SENTINEL_ELEMENT, this, false)
+            colDef.kspInit(property)
+
+            if (columnValidator.validate(manager, colDef)) {
+                columnDefinitions.add(colDef)
+                if (colDef.isPrimaryKey || colDef.isPrimaryKeyAutoIncrement || colDef.isRowId) {
+                    manager.logError("ModelView $elementName cannot have primary keys")
+                }
+            }
+        }
+
+        if (queryFieldName.isNullOrEmpty()) {
+            manager.logError("$elementClassName is missing the @ModelViewQuery field.")
         }
     }
 

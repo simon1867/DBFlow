@@ -5,8 +5,11 @@ import com.grosner.kpoet.`if`
 import com.grosner.kpoet.end
 import com.grosner.kpoet.statement
 import com.grosner.kpoet.typeName
+import com.google.devtools.ksp.getAllSuperTypes
+import com.google.devtools.ksp.symbol.KSFunctionDeclaration
 import com.raizlabs.android.dbflow.annotation.OneToMany
 import com.raizlabs.android.dbflow.processor.ClassNames
+import com.raizlabs.android.dbflow.processor.KSP_SENTINEL_ELEMENT
 import com.raizlabs.android.dbflow.processor.ProcessorManager
 import com.raizlabs.android.dbflow.processor.definition.column.ColumnAccessor
 import com.raizlabs.android.dbflow.processor.definition.column.GetterSetter
@@ -17,9 +20,16 @@ import com.raizlabs.android.dbflow.processor.definition.column.wrapperCommaIfBas
 import com.raizlabs.android.dbflow.processor.definition.column.wrapperIfBaseModel
 import com.raizlabs.android.dbflow.processor.utils.ModelUtils
 import com.raizlabs.android.dbflow.processor.utils.annotation
+import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
+import com.raizlabs.android.dbflow.processor.utils.getArrayArgument
+import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
+import com.raizlabs.android.dbflow.processor.utils.getEnumArgument
+import com.raizlabs.android.dbflow.processor.utils.getStringArgument
 import com.raizlabs.android.dbflow.processor.utils.isSubclass
 import com.raizlabs.android.dbflow.processor.utils.simpleString
 import com.raizlabs.android.dbflow.processor.utils.statement
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetClassName
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetTypeName
 import com.raizlabs.android.dbflow.processor.utils.toTypeElement
 import com.squareup.javapoet.ClassName
 import com.squareup.javapoet.CodeBlock
@@ -35,13 +45,13 @@ import javax.lang.model.element.TypeElement
 /**
  * Description: Represents the [OneToMany] annotation.
  */
-class OneToManyDefinition(executableElement: ExecutableElement,
+class OneToManyDefinition(element: Element,
                           processorManager: ProcessorManager,
-                          parentElements: Collection<Element>) : BaseDefinition(executableElement, processorManager) {
+                          parentElements: Collection<Element> = emptyList()) : BaseDefinition(element, processorManager) {
 
-    private var _methodName: String
+    private var _methodName: String = ""
 
-    private var _variableName: String
+    private var _variableName: String = ""
 
     var methods = mutableListOf<OneToMany.Method>()
 
@@ -60,86 +70,83 @@ class OneToManyDefinition(executableElement: ExecutableElement,
     var referencedTableType: TypeName? = null
     var hasWrapper = false
 
-    private var columnAccessor: ColumnAccessor
+    private var columnAccessor: ColumnAccessor = VisibleScopeColumnAccessor("")
     private var extendsModel = false
     private var referencedType: TypeElement? = null
+    private var kspReferencedClassName: ClassName? = null
 
     private var efficientCodeMethods = false
 
     init {
+        if (element is ExecutableElement) {
+            val oneToMany = element.annotation<OneToMany>()!!
 
-        val oneToMany = executableElement.annotation<OneToMany>()!!
+            efficientCodeMethods = oneToMany.efficientMethods
 
-        efficientCodeMethods = oneToMany.efficientMethods
-
-        _methodName = executableElement.simpleName.toString()
-        _variableName = oneToMany.variableName
-        if (_variableName.isEmpty()) {
-            _variableName = _methodName.replace("get", "")
-            _variableName = _variableName.substring(0, 1).toLowerCase() + _variableName.substring(1)
-        }
-
-        val privateAccessor = PrivateScopeColumnAccessor(_variableName, object : GetterSetter {
-            override val getterName: String = ""
-            override val setterName: String = ""
-        }, optionalGetterParam = if (hasWrapper) ModelUtils.wrapper else "")
-
-        var isVariablePrivate = false
-        val referencedElement = parentElements.firstOrNull { it.simpleString == _variableName }
-        if (referencedElement == null) {
-            // check on setter. if setter exists, we can reference it safely since a getter has already been defined.
-            if (!parentElements.any { it.simpleString == privateAccessor.setterNameElement }) {
-                manager.logError(OneToManyDefinition::class,
-                    "@OneToMany definition $elementName Cannot find referenced variable $_variableName.")
-            } else {
-                isVariablePrivate = true
+            _methodName = element.simpleName.toString()
+            _variableName = oneToMany.variableName
+            if (_variableName.isEmpty()) {
+                _variableName = _methodName.replace("get", "")
+                _variableName = _variableName.substring(0, 1).toLowerCase() + _variableName.substring(1)
             }
-        } else {
-            isVariablePrivate = referencedElement.modifiers.contains(Modifier.PRIVATE)
-        }
 
-        methods.addAll(oneToMany.methods)
+            val privateAccessor = PrivateScopeColumnAccessor(_variableName, object : GetterSetter {
+                override val getterName: String = ""
+                override val setterName: String = ""
+            }, optionalGetterParam = if (hasWrapper) ModelUtils.wrapper else "")
 
-        val parameters = executableElement.parameters
-        if (parameters.isNotEmpty()) {
-            if (parameters.size > 1) {
-                manager.logError(OneToManyDefinition::class, "OneToMany Methods can only have one parameter and that be the DatabaseWrapper.")
-            } else {
-                val param = parameters[0]
-                val name = param.asType().typeName
-                if (name == ClassNames.DATABASE_WRAPPER) {
-                    hasWrapper = true
+            var isVariablePrivate = false
+            val referencedElement = parentElements.firstOrNull { it.simpleString == _variableName }
+            if (referencedElement == null) {
+                // check on setter. if setter exists, we can reference it safely since a getter has already been defined.
+                if (!parentElements.any { it.simpleString == privateAccessor.setterNameElement }) {
+                    manager.logError(OneToManyDefinition::class,
+                        "@OneToMany definition $elementName Cannot find referenced variable $_variableName.")
                 } else {
-                    manager.logError(OneToManyDefinition::class, "OneToMany Methods can only specify a ${ClassNames.DATABASE_WRAPPER} as its parameter.")
+                    isVariablePrivate = true
+                }
+            } else {
+                isVariablePrivate = referencedElement.modifiers.contains(Modifier.PRIVATE)
+            }
+
+            methods.addAll(oneToMany.methods)
+
+            val parameters = element.parameters
+            if (parameters.isNotEmpty()) {
+                if (parameters.size > 1) {
+                    manager.logError(OneToManyDefinition::class, "OneToMany Methods can only have one parameter and that be the DatabaseWrapper.")
+                } else {
+                    val param = parameters[0]
+                    val name = param.asType().typeName
+                    if (name == ClassNames.DATABASE_WRAPPER) {
+                        hasWrapper = true
+                    } else {
+                        manager.logError(OneToManyDefinition::class, "OneToMany Methods can only specify a ${ClassNames.DATABASE_WRAPPER} as its parameter.")
+                    }
+                }
+            }
+
+            columnAccessor = if (isVariablePrivate) privateAccessor else VisibleScopeColumnAccessor(_variableName)
+
+            val returnType = element.returnType
+            val typeName = TypeName.get(returnType)
+            if (typeName is ParameterizedTypeName) {
+                val typeArguments = typeName.typeArguments
+                if (typeArguments.size == 1) {
+                    var refTableType = typeArguments[0]
+                    if (refTableType is WildcardTypeName) {
+                        refTableType = refTableType.upperBounds[0]
+                    }
+                    referencedTableType = refTableType
+
+                    referencedType = referencedTableType.toTypeElement(manager)
+                    extendsModel = referencedType.isSubclass(manager.processingEnvironment, ClassNames.MODEL)
                 }
             }
         }
-
-        if (isVariablePrivate) {
-            columnAccessor = privateAccessor
-        } else {
-            columnAccessor = VisibleScopeColumnAccessor(_variableName)
-        }
-
-        val returnType = executableElement.returnType
-        val typeName = TypeName.get(returnType)
-        if (typeName is ParameterizedTypeName) {
-            val typeArguments = typeName.typeArguments
-            if (typeArguments.size == 1) {
-                var refTableType = typeArguments[0]
-                if (refTableType is WildcardTypeName) {
-                    refTableType = refTableType.upperBounds[0]
-                }
-                referencedTableType = refTableType
-
-                referencedType = referencedTableType.toTypeElement(manager)
-                extendsModel = referencedType.isSubclass(manager.processingEnvironment, ClassNames.MODEL)
-            }
-        }
-
     }
 
-    private val methodName = "${ModelUtils.variable}.$_methodName(${wrapperIfBaseModel(hasWrapper)})"
+    private val methodName get() = "${ModelUtils.variable}.$_methodName(${wrapperIfBaseModel(hasWrapper)})"
 
     fun writeWrapperStatement(method: MethodSpec.Builder) {
         method.statement("\$T ${ModelUtils.wrapper} = \$T.getWritableDatabaseForTable(\$T.class)",
@@ -179,6 +186,7 @@ class OneToManyDefinition(executableElement: ExecutableElement,
 
     private fun writeLoopWithMethod(codeBuilder: MethodSpec.Builder, methodName: String, useWrapper: Boolean) {
         val oneToManyMethodName = this@OneToManyDefinition.methodName
+        val loopType: TypeName = kspReferencedClassName ?: ClassName.get(referencedType)
         codeBuilder.apply {
             `if`("$oneToManyMethodName != null") {
                 // need to load adapter for non-model classes
@@ -191,7 +199,7 @@ class OneToManyDefinition(executableElement: ExecutableElement,
                 if (efficientCodeMethods) {
                     statement("adapter.${methodName}All($oneToManyMethodName${wrapperCommaIfBaseModel(useWrapper)})")
                 } else {
-                    `for`("\$T value: $oneToManyMethodName", ClassName.get(referencedType)) {
+                    `for`("\$T value: $oneToManyMethodName", loopType) {
                         if (!extendsModel) {
                             statement("adapter.$methodName(value${wrapperCommaIfBaseModel(useWrapper)})")
                         } else {
@@ -202,6 +210,72 @@ class OneToManyDefinition(executableElement: ExecutableElement,
                 }
             }
         }.end()
+    }
+
+    fun kspInit(fn: KSFunctionDeclaration, classElementLookUpMap: Map<String, *>) {
+        elementName = fn.simpleName.asString()
+
+        val annot = fn.findKspAnnotation<OneToMany>() ?: return
+
+        efficientCodeMethods = annot.getBooleanArgument("efficientMethods") ?: true
+
+        _methodName = fn.simpleName.asString()
+        _variableName = annot.getStringArgument("variableName") ?: ""
+        if (_variableName.isEmpty()) {
+            _variableName = _methodName.removePrefix("get").replaceFirstChar { it.lowercase() }
+        }
+
+        val isVariablePrivate = annot.getBooleanArgument("isVariablePrivate") ?: run {
+            !classElementLookUpMap.containsKey(_variableName)
+        }
+
+        // Read methods as enum names from the annotation arguments. KSP1 delivers each entry as a
+        // KSType; KSP2 delivers a KSClassDeclaration for the enum entry directly. Handle all three.
+        val methodsArg = annot.arguments.find { it.name?.asString() == "methods" }?.value
+        val methodList = (methodsArg as? List<*>)?.mapNotNull { item ->
+            val name = when (item) {
+                is com.google.devtools.ksp.symbol.KSClassDeclaration -> item.simpleName.asString()
+                is com.google.devtools.ksp.symbol.KSType -> item.declaration.simpleName.asString()
+                is String -> item
+                else -> null
+            }
+            name?.let { runCatching { OneToMany.Method.valueOf(it) }.getOrNull() }
+        } ?: emptyList()
+        methods.addAll(methodList)
+
+        // Check if function has a DatabaseWrapper parameter
+        hasWrapper = fn.parameters.any { param ->
+            val typeName = param.type.resolve().toJavaPoetTypeName()
+            typeName == ClassNames.DATABASE_WRAPPER
+        }
+
+        val privateAccessor = PrivateScopeColumnAccessor(_variableName, object : GetterSetter {
+            override val getterName: String = ""
+            override val setterName: String = ""
+        }, optionalGetterParam = if (hasWrapper) ModelUtils.wrapper else "")
+
+        columnAccessor = if (isVariablePrivate) privateAccessor else VisibleScopeColumnAccessor(_variableName)
+
+        // Extract return type's single type argument (e.g. List<TwoColumnModel> → TwoColumnModel)
+        val returnType = fn.returnType?.resolve() ?: return
+        val returnTypeName = returnType.toJavaPoetTypeName()
+        if (returnTypeName is ParameterizedTypeName && returnTypeName.typeArguments.size == 1) {
+            var refTableType = returnTypeName.typeArguments[0]
+            if (refTableType is WildcardTypeName) refTableType = refTableType.upperBounds[0]
+            referencedTableType = refTableType
+            kspReferencedClassName = refTableType as? ClassName
+        }
+
+        // Determine if referenced type extends Model
+        val returnTypeDecl = (returnType.arguments.firstOrNull()?.type?.resolve()?.declaration
+            as? com.google.devtools.ksp.symbol.KSClassDeclaration)
+        if (returnTypeDecl != null) {
+            val superTypeNames = returnTypeDecl.getAllSuperTypes()
+                .mapNotNull { it.declaration.qualifiedName?.asString() }.toSet()
+            extendsModel = ClassNames.MODEL.toString() in superTypeNames
+            kspReferencedClassName = returnTypeDecl.toJavaPoetClassName()
+            referencedTableType = kspReferencedClassName
+        }
     }
 }
 

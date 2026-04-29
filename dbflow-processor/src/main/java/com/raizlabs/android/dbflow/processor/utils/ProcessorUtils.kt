@@ -13,22 +13,17 @@ import javax.tools.Diagnostic
 /**
  * Whether the specified element implements the [ClassName]
  */
-fun TypeElement?.implementsClass(processingEnvironment: ProcessingEnvironment
-                                 = manager.processingEnvironment, className: ClassName)
-        = implementsClass(processingEnvironment, className.toString())
+fun TypeElement?.implementsClass(processingEnvironment: ProcessingEnvironment?
+                                 = manager.processingEnvironment, className: ClassName): Boolean {
+    if (processingEnvironment == null) return false
+    return implementsClass(processingEnvironment, className.toString())
+}
 
 /**
  * Whether the specified element is assignable to the fqTn parameter
-
- * @param processingEnvironment The environment this runs in
- * *
- * @param fqTn                  THe fully qualified type name of the element we want to check
- * *
- * @param element               The element to check that implements
- * *
- * @return true if element implements the fqTn
  */
-fun TypeElement?.implementsClass(processingEnvironment: ProcessingEnvironment, fqTn: String): Boolean {
+fun TypeElement?.implementsClass(processingEnvironment: ProcessingEnvironment?, fqTn: String): Boolean {
+    if (processingEnvironment == null) return false
     val typeElement = processingEnvironment.elementUtils.getTypeElement(fqTn)
     if (typeElement == null) {
         processingEnvironment.messager.printMessage(Diagnostic.Kind.ERROR,
@@ -47,14 +42,17 @@ fun TypeElement?.implementsClass(processingEnvironment: ProcessingEnvironment, f
 /**
  * Whether the specified element is assignable to the [className] parameter
  */
-fun TypeElement?.isSubclass(processingEnvironment: ProcessingEnvironment
-                            = manager.processingEnvironment, className: ClassName)
-        = isSubclass(processingEnvironment, className.toString())
+fun TypeElement?.isSubclass(processingEnvironment: ProcessingEnvironment?
+                            = manager.processingEnvironment, className: ClassName): Boolean {
+    if (processingEnvironment == null) return false
+    return isSubclass(processingEnvironment, className.toString())
+}
 
 /**
  * Whether the specified element is assignable to the [fqTn] parameter
  */
-fun TypeElement?.isSubclass(processingEnvironment: ProcessingEnvironment, fqTn: String): Boolean {
+fun TypeElement?.isSubclass(processingEnvironment: ProcessingEnvironment?, fqTn: String): Boolean {
+    if (processingEnvironment == null) return false
     val typeElement = processingEnvironment.elementUtils.getTypeElement(fqTn)
     if (typeElement == null) {
         processingEnvironment.messager.printMessage(Diagnostic.Kind.ERROR, "Type Element was null for: $fqTn ensure that the visibility of the class is not private.")

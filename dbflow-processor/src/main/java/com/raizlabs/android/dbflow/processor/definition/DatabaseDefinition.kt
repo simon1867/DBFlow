@@ -9,6 +9,7 @@ import com.grosner.kpoet.modifiers
 import com.grosner.kpoet.param
 import com.grosner.kpoet.public
 import com.grosner.kpoet.statement
+import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.raizlabs.android.dbflow.annotation.ConflictAction
 import com.raizlabs.android.dbflow.annotation.Database
 import com.raizlabs.android.dbflow.processor.ClassNames
@@ -17,6 +18,12 @@ import com.raizlabs.android.dbflow.processor.ProcessorManager
 import com.raizlabs.android.dbflow.processor.TableValidator
 import com.raizlabs.android.dbflow.processor.utils.`override fun`
 import com.raizlabs.android.dbflow.processor.utils.annotation
+import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
+import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
+import com.raizlabs.android.dbflow.processor.utils.getEnumArgument
+import com.raizlabs.android.dbflow.processor.utils.getIntArgument
+import com.raizlabs.android.dbflow.processor.utils.getStringArgument
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetClassName
 import com.squareup.javapoet.ClassName
 import com.squareup.javapoet.ParameterizedTypeName
 import com.squareup.javapoet.TypeName
@@ -79,6 +86,39 @@ class DatabaseDefinition(manager: ProcessorManager, element: Element) : BaseDefi
             insertConflict = database.insertConflict
             updateConflict = database.updateConflict
         }
+    }
+
+    /**
+     * Initialises this definition from a KSP [KSClassDeclaration]. Called instead of the KAPT
+     * annotation-reading path that runs during the normal constructor via [element].
+     */
+    fun kspInit(ksClass: KSClassDeclaration) {
+        elementName = ksClass.simpleName.asString()
+        elementClassName = ksClass.toJavaPoetClassName()
+        elementTypeName = elementClassName
+        // DatabaseDefinition always lives in the flow manager package
+        packageName = ClassNames.FLOW_MANAGER_PACKAGE
+
+        val annot = ksClass.findKspAnnotation<Database>() ?: return
+
+        databaseName = annot.getStringArgument("name") ?: ""
+        databaseExtensionName = annot.getStringArgument("databaseExtension") ?: ""
+        inMemory = annot.getBooleanArgument("inMemory") ?: false
+        databaseClassName = elementName
+        consistencyChecksEnabled = annot.getBooleanArgument("consistencyCheckEnabled") ?: false
+        backupEnabled = annot.getBooleanArgument("backupEnabled") ?: false
+        classSeparator = annot.getStringArgument("generatedClassSeparator") ?: "_"
+        fieldRefSeparator = classSeparator
+        setOutputClassName(databaseClassName + classSeparator + "Database")
+        databaseVersion = annot.getIntArgument("version") ?: 1
+        foreignKeysSupported = annot.getBooleanArgument("foreignKeyConstraintsEnforced") ?: false
+
+        insertConflict = annot.getEnumArgument("insertConflict")
+            ?.let { runCatching { ConflictAction.valueOf(it) }.getOrNull() }
+            ?: ConflictAction.NONE
+        updateConflict = annot.getEnumArgument("updateConflict")
+            ?.let { runCatching { ConflictAction.valueOf(it) }.getOrNull() }
+            ?: ConflictAction.NONE
     }
 
     override val extendsClass: TypeName? = ClassNames.BASE_DATABASE_DEFINITION_CLASSNAME

@@ -128,7 +128,8 @@ class ReferenceDefinition(private val manager: ProcessorManager,
                 referenceColumnDefinition.element)
         isReferencedFieldPackagePrivate = isReferencedFieldPackagePrivate || isPackagePrivateNotInSamePackage
         val packageName = referencedColumn.packageName
-        val name = ClassName.get(referencedColumn.element.enclosingElement as TypeElement).simpleName()
+        val name = (referencedColumn.element.enclosingElement as? TypeElement)
+            ?.let { ClassName.get(it).simpleName() } ?: ""
         createScopes(referenceColumnDefinition, foreignKeyElementName, object : GetterSetter {
             override val getterName: String = referencedColumn.column?.getterName ?: ""
             override val setterName: String = referencedColumn.column?.setterName ?: ""

@@ -5,18 +5,23 @@ project.ext.artifactId = bt_name
 
 android {
     compileSdkVersion Integer.valueOf(dbflow_target_sdk)
-    buildToolsVersion dbflow_build_tools_version
+    namespace "com.raizlabs.android.dbflow.rx.kotlinextensions"
 
     defaultConfig {
         minSdkVersion dbflow_min_sdk_rx
         targetSdkVersion Integer.valueOf(dbflow_target_sdk)
     }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions { jvmTarget = '1.8' }
 }
 
 dependencies {
     api project("${dbflow_project_prefix}dbflow")
     api project("${dbflow_project_prefix}dbflow-rx")
-    api "org.jetbrains.kotlin:kotlin-stdlib-jre7:$kotlin_version"
+    api "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
 }
 
 apply from: '../kotlin-artifacts.gradle'

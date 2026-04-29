@@ -263,8 +263,10 @@ class LoadFromCursorAccessCombiner(combiner: Combiner,
                 var defaultValueBlock = defaultValue
                 if (!assignDefaultValuesFromCursor) {
                     defaultValueBlock = fieldLevelAccessor.get(modelBlock)
-                } else if (!hasDefault && fieldTypeName.isBoxedPrimitive) {
-                    hasDefault = true // force a null on it.
+                } else if (!hasDefault && !fieldTypeName.isPrimitive) {
+                    // Any non-primitive reference type (boxed numeric, String, etc.) with no
+                    // explicit default should produce null when the cursor column is null.
+                    hasDefault = true
                 }
                 val cursorAccess = CodeBlock.of("cursor.\$LOrDefault(\$L${if (hasDefault) ", $defaultValueBlock" else ""})",
                         SQLiteHelper.getMethod(wrapperFieldTypeName ?: fieldTypeName), indexName)

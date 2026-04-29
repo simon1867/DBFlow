@@ -1,9 +1,17 @@
 package com.raizlabs.android.dbflow.processor.definition
 
+import com.google.devtools.ksp.getAllSuperTypes
+import com.google.devtools.ksp.symbol.KSClassDeclaration
+import com.google.devtools.ksp.symbol.KSType
 import com.raizlabs.android.dbflow.annotation.TypeConverter
 import com.raizlabs.android.dbflow.processor.ClassNames
+import com.raizlabs.android.dbflow.processor.KSP_SENTINEL_TYPE_MIRROR
 import com.raizlabs.android.dbflow.processor.ProcessorManager
 import com.raizlabs.android.dbflow.processor.utils.annotation
+import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
+import com.raizlabs.android.dbflow.processor.utils.getArrayArgument
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetClassName
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetTypeName
 import com.squareup.javapoet.ClassName
 import com.squareup.javapoet.TypeName
 import javax.lang.model.element.TypeElement
@@ -19,10 +27,8 @@ class TypeConverterDefinition(val className: ClassName,
                               typeElement: TypeElement? = null) {
 
     var modelTypeName: TypeName? = null
-        private set
 
     var dbTypeName: TypeName? = null
-        private set
 
     var allowedSubTypes: List<TypeName>? = null
 
@@ -56,6 +62,43 @@ class TypeConverterDefinition(val className: ClassName,
             val typeArgs = typeConverterSuper.typeArguments
             dbTypeName = ClassName.get(typeArgs[0])
             modelTypeName = ClassName.get(typeArgs[1])
+        }
+    }
+
+    companion object {
+        private val TYPE_CONVERTER_QNAME = ClassNames.TYPE_CONVERTER.toString()
+
+        fun fromKsp(ksClass: KSClassDeclaration, manager: ProcessorManager): TypeConverterDefinition? {
+            val className = ksClass.toJavaPoetClassName()
+
+            var dbTypeName: TypeName? = null
+            var modelTypeName: TypeName? = null
+
+            for (superType in ksClass.getAllSuperTypes()) {
+                val qName = superType.declaration.qualifiedName?.asString() ?: continue
+                if (qName == TYPE_CONVERTER_QNAME) {
+                    val args = superType.arguments
+                    if (args.size >= 2) {
+                        // Box primitives — Java generics cannot use primitive types as type arguments
+                        dbTypeName = args[0].type?.resolve()?.toJavaPoetTypeName()?.box()
+                        modelTypeName = args[1].type?.resolve()?.toJavaPoetTypeName()?.box()
+                    }
+                    break
+                }
+            }
+
+            if (dbTypeName == null || modelTypeName == null) return null
+
+            val definition = TypeConverterDefinition(className, KSP_SENTINEL_TYPE_MIRROR, manager)
+            definition.dbTypeName = dbTypeName
+            definition.modelTypeName = modelTypeName
+
+            ksClass.findKspAnnotation<TypeConverter>()?.let { annot ->
+                val subTypes = annot.getArrayArgument<KSType>("allowedSubtypes")
+                definition.allowedSubTypes = subTypes?.map { it.toJavaPoetTypeName() } ?: emptyList()
+            }
+
+            return definition
         }
     }
 

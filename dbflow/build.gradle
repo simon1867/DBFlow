@@ -4,7 +4,7 @@ project.ext.artifactId = bt_name
 
 android {
     compileSdkVersion Integer.valueOf(dbflow_target_sdk)
-    buildToolsVersion dbflow_build_tools_version
+    namespace "com.raizlabs.android.dbflow"
 
     defaultConfig {
         minSdkVersion dbflow_min_sdk
@@ -17,15 +17,14 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_7
-        targetCompatibility JavaVersion.VERSION_1_7
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
-
 }
 
 dependencies {
     api project("${dbflow_project_prefix}dbflow-core")
-    api "androidx.annotation:annotation:1.2.0"
+    api "androidx.annotation:annotation:1.7.0"
 }
 
 apply from: '../android-artifacts.gradle'

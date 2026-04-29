@@ -1,6 +1,9 @@
 package com.raizlabs.android.dbflow.processor.definition.column
 
 import com.grosner.kpoet.code
+import com.google.devtools.ksp.symbol.KSPropertyDeclaration
+import com.google.devtools.ksp.symbol.Nullability
+import com.google.devtools.ksp.symbol.Origin
 import com.raizlabs.android.dbflow.annotation.Collate
 import com.raizlabs.android.dbflow.annotation.Column
 import com.raizlabs.android.dbflow.annotation.ConflictAction
@@ -11,16 +14,27 @@ import com.raizlabs.android.dbflow.annotation.PrimaryKey
 import com.raizlabs.android.dbflow.annotation.Unique
 import com.raizlabs.android.dbflow.data.Blob
 import com.raizlabs.android.dbflow.processor.ClassNames
+import com.raizlabs.android.dbflow.processor.KSP_SENTINEL_ELEMENT
 import com.raizlabs.android.dbflow.processor.ProcessorManager
 import com.raizlabs.android.dbflow.processor.definition.BaseDefinition
 import com.raizlabs.android.dbflow.processor.definition.BaseTableDefinition
 import com.raizlabs.android.dbflow.processor.definition.TableDefinition
 import com.raizlabs.android.dbflow.processor.definition.TypeConverterDefinition
 import com.raizlabs.android.dbflow.processor.utils.annotation
+import com.raizlabs.android.dbflow.processor.utils.findAnnotationByName
+import com.raizlabs.android.dbflow.processor.utils.findKspAnnotation
 import com.raizlabs.android.dbflow.processor.utils.fromTypeMirror
+import com.raizlabs.android.dbflow.processor.utils.getBooleanArgument
+import com.raizlabs.android.dbflow.processor.utils.getEnumArgument
+import com.raizlabs.android.dbflow.processor.utils.getIntArgument
+import com.raizlabs.android.dbflow.processor.utils.getKsTypeArgument
+import com.raizlabs.android.dbflow.processor.utils.getStringArgument
 import com.raizlabs.android.dbflow.processor.utils.getTypeElement
+import com.raizlabs.android.dbflow.processor.utils.isEnum
 import com.raizlabs.android.dbflow.processor.utils.isNullOrEmpty
 import com.raizlabs.android.dbflow.processor.utils.toClassName
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetClassName
+import com.raizlabs.android.dbflow.processor.utils.toJavaPoetTypeName
 import com.raizlabs.android.dbflow.processor.utils.toTypeElement
 import com.raizlabs.android.dbflow.sql.QueryBuilder
 import com.squareup.javapoet.ArrayTypeName
@@ -271,6 +285,21 @@ constructor(processorManager: ProcessorManager, element: Element,
                 subWrapperAccessor)
     }
 
+    /**
+     * Reads an `int[]` annotation argument (e.g. `uniqueGroups`, `indexGroups`). Java permits
+     * writing a single-element array as a bare scalar (`uniqueGroups = 1`), and KSP exposes that
+     * form as a single Int rather than a List, so we have to handle both shapes.
+     */
+    private fun readIntArrayArgument(annot: com.google.devtools.ksp.symbol.KSAnnotation, name: String): List<Int> {
+        val raw = annot.arguments.find { it.name?.asString() == name }?.value ?: return emptyList()
+        return when (raw) {
+            is List<*>  -> raw.filterIsInstance<Int>()
+            is IntArray -> raw.toList()
+            is Int      -> listOf(raw)
+            else        -> emptyList()
+        }
+    }
+
     private fun evaluateTypeConverter(typeConverterDefinition: TypeConverterDefinition?,
                                       isCustom: Boolean) {
         // Any annotated members, otherwise we will use the scanner to find other ones
@@ -297,6 +326,142 @@ constructor(processorManager: ProcessorManager, element: Element,
                 }
             }
         }
+    }
+
+    /**
+     * KSP initialiser – called after construction with [KSP_SENTINEL_ELEMENT] to populate all
+     * fields from a [KSPropertyDeclaration]. Mirrors the logic in the primary [init] block but
+     * reads annotation data from KSP instead of javax.lang.model.
+     */
+    open fun kspInit(property: KSPropertyDeclaration) {
+        val ksType = property.type.resolve()
+
+        elementName = property.simpleName.asString()
+        elementTypeName = ksType.toJavaPoetTypeName()
+        elementClassName = (ksType.declaration as? com.google.devtools.ksp.symbol.KSClassDeclaration)?.toJavaPoetClassName()
+        packageName = property.parentDeclaration?.packageName?.asString() ?: ""
+
+        // PLATFORM = unannotated Java type: treat as nullable (same as KAPT did for unannotated Java).
+        isNullableType = ksType.isMarkedNullable || ksType.nullability == Nullability.PLATFORM
+        isNotNullType = ksType.nullability == Nullability.NOT_NULL || elementTypeName?.isPrimitive == true
+
+        // @NotNull
+        property.findKspAnnotation<NotNull>()?.let { notNullAnnot ->
+            notNull = true
+            val conflictName = notNullAnnot.getEnumArgument("onNullConflict") ?: "NONE"
+            onNullConflict = runCatching { ConflictAction.valueOf(conflictName) }.getOrDefault(ConflictAction.NONE)
+        }
+
+        // @Column
+        val columnAnnot = property.findKspAnnotation<Column>()
+        column = null // sentinel already set it to null; keep null since we read via KSP
+        val rawColumnName = columnAnnot?.getStringArgument("name").takeIf { !it.isNullOrEmpty() } ?: elementName
+        columnName = rawColumnName
+        length = columnAnnot?.getIntArgument("length") ?: -1
+        collate = columnAnnot?.getEnumArgument("collate")
+            ?.let { runCatching { Collate.valueOf(it) }.getOrNull() }
+            ?: Collate.NONE
+        defaultValue = columnAnnot?.getStringArgument("defaultValue")?.takeIf { it.isNotBlank() }
+
+        val isString = elementTypeName == ClassName.get(String::class.java)
+        if (defaultValue != null && isString && !QUOTE_PATTERN.matcher(defaultValue).find()) {
+            defaultValue = "\"$defaultValue\""
+        }
+        if (isNotNullType && defaultValue == null && isString) {
+            defaultValue = "\"\""
+        }
+
+        val nameAllocator = NameAllocator()
+        propertyFieldName = nameAllocator.newName(columnName)
+
+        // Accessor determination:
+        // - Java fields (JAVA/JAVA_LIB/SYNTHETIC origin): non-private → direct access.
+        // - Kotlin properties: need @JvmField for direct access; otherwise use getter/setter.
+        val isPrivate = com.google.devtools.ksp.symbol.Modifier.PRIVATE in property.modifiers
+        val isKotlinOrigin = property.origin == Origin.KOTLIN || property.origin == Origin.KOTLIN_LIB
+        val hasJvmField = property.findAnnotationByName("kotlin.jvm.JvmField") != null
+        val useDirectAccess = if (!isKotlinOrigin) !isPrivate else (!isPrivate && hasJvmField)
+        if (!useDirectAccess) {
+            val isBoolean = elementTypeName?.box() == TypeName.BOOLEAN.box()
+            val useIs = isBoolean && baseTableDefinition is TableDefinition &&
+                    (baseTableDefinition as TableDefinition).useIsForPrivateBooleans
+            columnAccessor = PrivateScopeColumnAccessor(elementName, object : GetterSetter {
+                override val getterName: String = columnAnnot?.getStringArgument("getterName") ?: ""
+                override val setterName: String = columnAnnot?.getStringArgument("setterName") ?: ""
+            }, useIsForPrivateBooleans = useIs)
+        } else {
+            columnAccessor = VisibleScopeColumnAccessor(elementName)
+        }
+
+        // @PrimaryKey
+        val pkAnnot = property.findKspAnnotation<PrimaryKey>()
+        if (pkAnnot != null) {
+            val rowId = pkAnnot.getBooleanArgument("rowID") ?: false
+            val autoincrement = pkAnnot.getBooleanArgument("autoincrement") ?: false
+            val quickCheck = pkAnnot.getBooleanArgument("quickCheckAutoIncrement") ?: false
+            when {
+                rowId -> isRowId = true
+                autoincrement -> {
+                    isPrimaryKeyAutoIncrement = true
+                    isQuickCheckPrimaryKeyAutoIncrement = quickCheck
+                }
+                else -> isPrimaryKey = true
+            }
+        }
+
+        // @Unique
+        property.findKspAnnotation<Unique>()?.let { uniqueAnnot ->
+            unique = uniqueAnnot.getBooleanArgument("unique") ?: true
+            val conflictName = uniqueAnnot.getEnumArgument("onUniqueConflict") ?: "NONE"
+            onUniqueConflict = runCatching { ConflictAction.valueOf(conflictName) }.getOrDefault(ConflictAction.NONE)
+            uniqueGroups.addAll(readIntArrayArgument(uniqueAnnot, "uniqueGroups"))
+        }
+
+        // @Index
+        property.findKspAnnotation<Index>()?.let { indexAnnot ->
+            val groups = readIntArrayArgument(indexAnnot, "indexGroups")
+            if (groups.isEmpty()) {
+                indexGroups.add(IndexGroup.GENERIC)
+            } else {
+                indexGroups.addAll(groups)
+            }
+        }
+
+        // @Column(typeConverter = SomeConverter::class) — custom converter
+        hasCustomConverter = false
+        val customConverterKsType = columnAnnot?.getKsTypeArgument("typeConverter")
+        val customConverterDecl = customConverterKsType?.declaration as? com.google.devtools.ksp.symbol.KSClassDeclaration
+        if (customConverterDecl != null &&
+            customConverterDecl.qualifiedName?.asString() != ClassNames.TYPE_CONVERTER.toString()) {
+            val tcDef = TypeConverterDefinition.fromKsp(customConverterDecl, manager)
+            if (tcDef != null) {
+                evaluateTypeConverter(tcDef, true)
+            }
+        }
+
+        // Type-converter detection (enum, blob, built-in converters)
+        val ksClassDecl = ksType.declaration as? com.google.devtools.ksp.symbol.KSClassDeclaration
+        if (hasCustomConverter) {
+            // already handled above
+        } else if (ksClassDecl?.isEnum() == true) {
+            wrapperAccessor = EnumColumnAccessor(elementTypeName!!)
+            wrapperTypeName = ClassName.get(String::class.java)
+        } else if (elementTypeName == ClassName.get(Blob::class.java)) {
+            wrapperAccessor = BlobColumnAccessor()
+            wrapperTypeName = ArrayTypeName.of(TypeName.BYTE)
+        } else {
+            when (elementTypeName) {
+                TypeName.BOOLEAN -> { wrapperAccessor = BooleanColumnAccessor(); wrapperTypeName = TypeName.BOOLEAN }
+                TypeName.CHAR   -> { wrapperAccessor = CharColumnAccessor();    wrapperTypeName = TypeName.CHAR }
+                TypeName.BYTE   -> { wrapperAccessor = ByteColumnAccessor();    wrapperTypeName = TypeName.BYTE }
+                else -> {
+                    typeConverterDefinition = elementTypeName?.let { manager.getTypeConverterDefinition(it) }
+                    evaluateTypeConverter(typeConverterDefinition, false)
+                }
+            }
+        }
+
+        combiner = Combiner(columnAccessor, elementTypeName!!, wrapperAccessor, wrapperTypeName, subWrapperAccessor)
     }
 
     override fun toString(): String {

@@ -16,7 +16,7 @@ class DatabaseHolderDefinition(private val processorManager: ProcessorManager) :
 
     init {
 
-        val options = this.processorManager.processingEnvironment.options
+        val options = this.processorManager.options
         if (options.containsKey(OPTION_TARGET_MODULE_NAME)) {
             className = options[OPTION_TARGET_MODULE_NAME] ?: ""
         }

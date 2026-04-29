@@ -11,13 +11,14 @@ import java.util.*
 /**
  * Description:
  */
-class UniqueGroupsDefinition(uniqueGroup: UniqueGroup) {
+class UniqueGroupsDefinition(
+    var number: Int,
+    private val uniqueConflict: ConflictAction
+) {
+    /** Convenience for the KAPT path which has a real annotation instance. */
+    constructor(uniqueGroup: UniqueGroup) : this(uniqueGroup.groupNumber, uniqueGroup.uniqueConflict)
 
     var columnDefinitionList: MutableList<ColumnDefinition> = ArrayList()
-
-    var number: Int = uniqueGroup.groupNumber
-
-    private val uniqueConflict: ConflictAction = uniqueGroup.uniqueConflict
 
     fun addColumnDefinition(columnDefinition: ColumnDefinition) {
         columnDefinitionList.add(columnDefinition)
