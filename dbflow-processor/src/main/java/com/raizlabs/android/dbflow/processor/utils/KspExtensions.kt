@@ -96,11 +96,18 @@ fun KSType.toJavaPoetTypeName(): TypeName {
     }
 }
 
-fun KSAnnotated.findAnnotationByName(qualifiedName: String): KSAnnotation? =
-    annotations.find {
-        val resolved = it.annotationType.resolve()
-        !resolved.isError && resolved.declaration.qualifiedName?.asString() == qualifiedName
+fun KSAnnotated.findAnnotationByName(qualifiedName: String): KSAnnotation? {
+    // [KSAnnotation.shortName] is read straight off the annotation reference, while
+    // annotationType.resolve() is a full type resolution. Every column runs a handful of these
+    // lookups against every annotation it carries, so gate the resolve on a cheap name match.
+    val shortName = qualifiedName.substringAfterLast('.')
+    return annotations.find {
+        it.shortName.asString() == shortName && run {
+            val resolved = it.annotationType.resolve()
+            !resolved.isError && resolved.declaration.qualifiedName?.asString() == qualifiedName
+        }
     }
+}
 
 inline fun <reified T : Annotation> KSAnnotated.findKspAnnotation(): KSAnnotation? =
     findAnnotationByName(T::class.qualifiedName ?: "")
